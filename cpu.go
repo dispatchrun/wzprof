@@ -1,8 +1,10 @@
 package wazeroprofiler
 
 import (
+	"container/list"
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/cespare/xxhash"
 	"github.com/google/pprof/profile"
@@ -11,6 +13,7 @@ import (
 )
 
 type CPUProfiler struct {
+	stacks  *list.List
 	sc      *stackCounters
 	profile *profile.Profile
 }
@@ -20,7 +23,7 @@ type stackCounters struct {
 	locations map[uint64][]*profile.Location
 }
 
-func NewCPUProfilerListener() *CPUProfiler {
+func NewCPUProfiler() *CPUProfiler {
 	p := &profile.Profile{
 		Function:   []*profile.Function{},
 		SampleType: []*profile.ValueType{{Type: "cpu_samples", Unit: "count"}},
@@ -32,13 +35,28 @@ func NewCPUProfilerListener() *CPUProfiler {
 	}
 
 	return &CPUProfiler{
+		stacks:  list.New(),
 		sc:      sc,
 		profile: p,
 	}
 }
 
+func (p *CPUProfiler) Register(ctx context.Context) context.Context {
+	return context.WithValue(ctx, experimental.FunctionListenerFactoryKey{}, p)
+}
+
+func (p *CPUProfiler) Write(w io.Writer) error {
+	p.collectSamples()
+
+	return p.profile.Write(w)
+}
+
+func (p *CPUProfiler) NewListener(def api.FunctionDefinition) experimental.FunctionListener {
+	return p
+}
+
 func (p *CPUProfiler) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, params []uint64, si experimental.StackIterator, globals experimental.Globals) context.Context {
-	p.populateProfile(si)
+	p.walk(si)
 	return ctx
 }
 
@@ -46,29 +64,55 @@ func (p *CPUProfiler) After(ctx context.Context, mod api.Module, fnd api.Functio
 	// Not implemented
 }
 
-func (p *CPUProfiler) populateProfile(si experimental.StackIterator) {
-	locations := []*profile.Location{}
-
-	h := xxhash.New()
-	for si.Next() {
-		t := si.FnType()
-
-		h.Write([]byte(t.DebugName()))
-
-		locations = append(locations, locationForCall(p.profile, t.ModuleName(), t.Index(), t.Name()))
-	}
-
-	if c, ok := p.sc.counters[h.Sum64()]; ok {
-		c++
-		p.sc.counters[h.Sum64()] = c
-		return
-	}
-
-	p.sc.counters[h.Sum64()] = 1
-	p.sc.locations[h.Sum64()] = locations
+type funcDef struct {
+	debugName  string
+	moduleName string
+	index      uint32
+	name       string
 }
 
-func (p *CPUProfiler) updateSamples() {
+type stack []funcDef
+
+func (p *CPUProfiler) walk(si experimental.StackIterator) {
+	s := stack{}
+	for si.Next() {
+		s = append(s, funcDef{
+			debugName:  si.FnType().DebugName(),
+			moduleName: si.FnType().ModuleName(),
+			index:      si.FnType().Index(),
+			name:       si.FnType().Name(),
+		})
+	}
+	p.stacks.PushBack(s)
+}
+
+func (p *CPUProfiler) consumeStacks() {
+	for e := p.stacks.Front(); e != nil; e = e.Next() {
+		locations := []*profile.Location{}
+		h := xxhash.New()
+
+		s := e.Value.(stack)
+		for _, f := range s {
+			h.Write([]byte(f.debugName))
+			locations = append(locations, locationForCall(p.profile, f.moduleName, f.index, f.name))
+		}
+
+		sum64 := h.Sum64()
+		if c, ok := p.sc.counters[sum64]; ok {
+			c++
+			p.sc.counters[sum64] = c
+			continue
+		}
+
+		p.sc.counters[sum64] = 1
+		p.sc.locations[sum64] = locations
+	}
+}
+
+func (p *CPUProfiler) collectSamples() {
+	p.consumeStacks()
+
+	//TODO: flush after collect?
 	for si, count := range p.sc.counters {
 		p.profile.Sample = append(p.profile.Sample, &profile.Sample{
 			Value:    []int64{count},
