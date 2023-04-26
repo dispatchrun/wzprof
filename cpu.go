@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/cespare/xxhash"
@@ -24,7 +23,7 @@ type CPUProfiler struct {
 	profile *profile.Profile
 	sampler Sampler
 
-	pool sync.Pool
+	buf []*api.FunctionDefinition
 }
 
 type stackCounters struct {
@@ -76,20 +75,26 @@ func (p *CPUProfiler) After(ctx context.Context, mod api.Module, fnd api.Functio
 	// Not implemented
 }
 
-type stack []api.FunctionDefinition
-
 func (p *CPUProfiler) walk(si experimental.StackIterator) {
-	s, _ := p.pool.Get().(stack)
+	s := p.buf
 	if s == nil {
-		s = stack{}
+		s = make([]*api.FunctionDefinition, 50)
 	}
-	defer p.pool.Put(s)
 
+	i := 0
 	for si.Next() {
+		if i >= len(s) {
+			b := make([]*api.FunctionDefinition, len(s)*2)
+			copy(b, s)
+			s = b
+		}
 		fn := si.FunctionDefinition()
-		s = append(s, fn)
+		s[i] = &fn
+		i++
+
 	}
-	p.stacks.PushBack(s)
+
+	p.stacks.PushBack(s[:i])
 	if p.stacks.Len() >= DefaultMaxStacksCount {
 		e := p.stacks.Front()
 		p.stacks.Remove(e)
@@ -101,10 +106,10 @@ func (p *CPUProfiler) consumeStacks() {
 		locations := []*profile.Location{}
 		h := xxhash.New()
 
-		s := e.Value.(stack)
+		s := e.Value.([]*api.FunctionDefinition)
 		for _, f := range s {
-			h.Write([]byte(f.DebugName()))
-			locations = append(locations, locationForCall(p.profile, f.ModuleName(), f.Index(), f.Name()))
+			h.Write([]byte((*f).DebugName()))
+			locations = append(locations, locationForCall(p.profile, (*f).ModuleName(), (*f).Index(), (*f).Name()))
 		}
 
 		sum64 := h.Sum64()
