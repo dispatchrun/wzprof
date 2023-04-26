@@ -38,7 +38,7 @@ func (p *ProfilerMemory) Register() map[string]ProfileFunction {
 	}
 }
 
-func (p *ProfilerMemory) Listen(name string, ft api.FunctionDefinition) string {
+func (p *ProfilerMemory) Listen(name string) string {
 	switch name {
 	// C standard library, Rust
 	case "malloc":

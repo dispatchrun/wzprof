@@ -67,9 +67,9 @@ func NewProfileListener(profilers ...Profiler) *ProfilerListener {
 	return &ProfilerListener{
 		profileFns: profileFns,
 		samplerFns: samplerFns,
-
-		profilers: profilers,
-		samples:   list.New(),
+		hooks:      make(map[string]*hook),
+		profilers:  profilers,
+		samples:    list.New(),
 	}
 }
 
