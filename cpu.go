@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
+	"time"
 
 	"github.com/cespare/xxhash"
 	"github.com/google/pprof/profile"
@@ -12,10 +14,14 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
+const DefaultMaxStacksCount = 250000
+const DefaultSampling = 0.2
+
 type CPUProfiler struct {
 	stacks  *list.List
 	sc      *stackCounters
 	profile *profile.Profile
+	sampler Sampler
 }
 
 type stackCounters struct {
@@ -38,6 +44,7 @@ func NewCPUProfiler() *CPUProfiler {
 		stacks:  list.New(),
 		sc:      sc,
 		profile: p,
+		sampler: newRandomSampler(time.Now().UnixNano(), DefaultSampling),
 	}
 }
 
@@ -55,8 +62,10 @@ func (p *CPUProfiler) NewListener(def api.FunctionDefinition) experimental.Funct
 	return p
 }
 
-func (p *CPUProfiler) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, params []uint64, si experimental.StackIterator, globals experimental.Globals) context.Context {
-	p.walk(si)
+func (p *CPUProfiler) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+	if p.sampler.Do() {
+		p.walk(si)
+	}
 	return ctx
 }
 
@@ -77,13 +86,17 @@ func (p *CPUProfiler) walk(si experimental.StackIterator) {
 	s := stack{}
 	for si.Next() {
 		s = append(s, funcDef{
-			debugName:  si.FnType().DebugName(),
-			moduleName: si.FnType().ModuleName(),
-			index:      si.FnType().Index(),
-			name:       si.FnType().Name(),
+			debugName:  si.FunctionDefinition().DebugName(),
+			moduleName: si.FunctionDefinition().ModuleName(),
+			index:      si.FunctionDefinition().Index(),
+			name:       si.FunctionDefinition().Name(),
 		})
 	}
 	p.stacks.PushBack(s)
+	if p.stacks.Len() >= DefaultMaxStacksCount {
+		e := p.stacks.Front()
+		p.stacks.Remove(e)
+	}
 }
 
 func (p *CPUProfiler) consumeStacks() {
@@ -147,4 +160,24 @@ func locationForCall(p *profile.Profile, moduleName string, index uint32, name s
 	}
 	p.Location = append(p.Location, loc)
 	return loc
+}
+
+type Sampler interface {
+	Do() bool
+}
+
+type randomSampler struct {
+	rand   *rand.Rand
+	chance float32
+}
+
+func newRandomSampler(seed int64, chance float32) *randomSampler {
+	return &randomSampler{
+		rand:   rand.New(rand.NewSource(seed)),
+		chance: chance,
+	}
+}
+
+func (s *randomSampler) Do() bool {
+	return s.rand.Float32() < s.chance
 }
