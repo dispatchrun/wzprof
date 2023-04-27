@@ -142,7 +142,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 		s := e.Value.(sample)
 		for _, f := range s.stack {
 			h.Write([]byte(f.DebugName()))
-			locations = append(locations, locationForCall(prof, f.ModuleName(), f.Index(), f.Name()))
+			locations = append(locations, locationForCall(prof, f.ModuleName(), f.Index(), f.DebugName()))
 		}
 
 		sum64 := h.Sum64()
