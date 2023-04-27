@@ -1,4 +1,4 @@
-![Build](https://github.com/stealthrocket/wazero-profiler/actions/workflows/build.yml/badge.svg)
+[![Build](https://github.com/stealthrocket/wazero-profiler/actions/workflows/go.yml/badge.svg)](https://github.com/stealthrocket/wazero-profiler/actions/workflows/go.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/stealthrocket/wazero-profiler.svg)](https://pkg.go.dev/github.com/stealthrocket/wazero-profiler)
 [![Apache 2 License](https://img.shields.io/badge/license-Apache%202-blue.svg)](LICENSE)
 
