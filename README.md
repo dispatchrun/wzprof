@@ -29,3 +29,13 @@ Or if you want to use the CLI:
 ```
 go install github.com/stealthrocket/wazero-profiler/cmd/wazero-profiler@latest
 ```
+
+### Example with go tool
+
+```
+wazero-profiler -http=:8080 path/to/guest.wasm
+```
+
+```
+go tool pprof -http=:3030 http://localhost:8080
+```
