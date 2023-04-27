@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/google/pprof/profile"
-	wazeroprofiler "github.com/stealthrocket/wazero-profiler"
+	"github.com/stealthrocket/wzprof"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
@@ -28,7 +28,7 @@ func main() {
 var (
 	file      = flag.String("file", "", "Filename to write profile to")
 	httpAddr  = flag.String("http", "", "HTTP server address")
-	sampling  = flag.Float64("sampling", wazeroprofiler.DefaultCPUSampling, "CPU sampling rate")
+	sampling  = flag.Float64("sampling", wzprof.DefaultCPUSampling, "CPU sampling rate")
 	profilers = flag.String("profilers", "cpu,mem", "Comma-separated list of profilers to use")
 )
 
@@ -40,7 +40,7 @@ func run() error {
 
 	args := flag.Args()
 	if len(args) != 1 {
-		return fmt.Errorf("usage: wazero-profiler </path/to/app.wasm>")
+		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
 	}
 	wasmPath := args[0]
 	wasmName := filepath.Base(wasmPath)
@@ -49,20 +49,20 @@ func run() error {
 		return fmt.Errorf("cannot open WASM file at '%s': %w", wasmPath, err)
 	}
 
-	pfs := []wazeroprofiler.Profiler{}
+	pfs := []wzprof.Profiler{}
 	pfnames := strings.Split(*profilers, ",")
 	for _, name := range pfnames {
 		switch name {
 		case "cpu":
-			pfs = append(pfs, &wazeroprofiler.ProfilerCPU{
+			pfs = append(pfs, &wzprof.ProfilerCPU{
 				Sampling: float32(*sampling),
 			})
 		case "mem":
-			pfs = append(pfs, &wazeroprofiler.ProfilerMemory{})
+			pfs = append(pfs, &wzprof.ProfilerMemory{})
 		}
 	}
 
-	pl := wazeroprofiler.NewProfileListener(pfs...)
+	pl := wzprof.NewProfileListener(pfs...)
 	ctx = pl.Register(ctx)
 
 	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
