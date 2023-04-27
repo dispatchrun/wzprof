@@ -246,7 +246,6 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 	var locations []location
 	if p.mapper != nil && f.pc > 0 {
 		locations = p.mapper.Lookup(f.pc)
-		fmt.Println(locations)
 	}
 	if len(locations) == 0 {
 		// If we don't have a source location, attach to a
@@ -270,7 +269,6 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 			SystemName: stableName,
 			Filename:   locations[0].File,
 		}
-		fmt.Println("created pprof function", *pprofFn, "NAME:", pprofFn.Filename)
 		prof.Function = append(prof.Function, pprofFn)
 	} else {
 		if pprofFn.Filename == "" && locations[0].File != "" {

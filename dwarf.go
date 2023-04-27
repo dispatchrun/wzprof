@@ -1,4 +1,4 @@
-package wazeroprofiler
+package wzprof
 
 import (
 	"debug/dwarf"
@@ -29,8 +29,6 @@ type dwarfmapper struct {
 }
 
 func newDwarfmapper(sections []api.CustomSection) (mapper, error) {
-	fmt.Println("loading dwarf...")
-
 	var info, line, ranges, str, abbrev []byte
 
 	for _, section := range sections {
