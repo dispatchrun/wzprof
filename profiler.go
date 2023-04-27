@@ -157,7 +157,6 @@ func (p *ProfilerListener) Write(w io.Writer) error {
 	return prof.Write(w)
 }
 
-// took from memprofiler
 func locationForCall(p *profile.Profile, moduleName string, index uint32, name string) *profile.Location {
 	// so far, 1 location = 1 function
 	key := fmt.Sprintf("%s.%s[%d]", moduleName, name, index)

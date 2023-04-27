@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,7 +26,8 @@ func main() {
 
 var (
 	file     = flag.String("file", "", "Filename to write profile to")
-	httpAddr = flag.String("http", ":8080", "HTTP server address")
+	httpAddr = flag.String("http", "", "HTTP server address")
+	sampling = flag.Float64("sampling", wazeroprofiler.DefaultCPUSampling, "CPU sampling rate")
 )
 
 func run() error {
@@ -45,7 +48,9 @@ func run() error {
 	}
 
 	pl := wazeroprofiler.NewProfileListener(
-		&wazeroprofiler.ProfilerCPU{},
+		&wazeroprofiler.ProfilerCPU{
+			Sampling: float32(*sampling),
+		},
 		&wazeroprofiler.ProfilerMemory{},
 	)
 	ctx = pl.Register(ctx)
@@ -77,6 +82,14 @@ func run() error {
 
 		cancel()
 	}()
+
+	if *httpAddr != "" {
+		go func() {
+			if err := http.ListenAndServe(*httpAddr, pl); err != nil {
+				log.Println(err)
+			}
+		}()
+	}
 
 	<-ctx.Done()
 	cancel()
