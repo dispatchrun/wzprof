@@ -1,4 +1,4 @@
-package wazeroprofiler
+package wzprof
 
 import "math/rand"
 
