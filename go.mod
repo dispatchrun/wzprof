@@ -1,4 +1,4 @@
-module github.com/stealthrocket/wazero-profiler
+module github.com/stealthrocket/wzprof
 
 go 1.20
 
