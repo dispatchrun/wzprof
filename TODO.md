@@ -1,0 +1,2 @@
+- Add API to screenshot stack+sp+fn
+- Sampling time based or random
