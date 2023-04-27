@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/cespare/xxhash"
 	"github.com/google/pprof/profile"
@@ -35,6 +36,7 @@ type Profiler interface {
 	Listen(name string) string
 }
 
+// ProfilerListener is a FunctionListenerFactory carrying a list of profilers.
 type ProfilerListener struct {
 	profilers  []Profiler
 	profileFns map[string]ProfileFunction
@@ -44,14 +46,20 @@ type ProfilerListener struct {
 
 	lastStackSize int
 	samples       *list.List
+	samplesMu     sync.RWMutex
 }
 
+// DefaultMaxStacksCount is the default maximum number of stacks to keep in.
 const DefaultMaxStacksCount = 250000
 
 func keyFor(idx int, name string) string {
 	return fmt.Sprintf("%d:%s", idx, name)
 }
 
+// NewProfileListener creates a new ProfilerListener with the given profilers.
+// We currently support two profilers:
+// - ProfilerCPU collects CPU usage samples based on stack counts
+// - ProfilerMemory collects Memory usage based on well known allocation functions
 func NewProfileListener(profilers ...Profiler) *ProfilerListener {
 	profileFns := map[string]ProfileFunction{}
 	samplerFns := make([]Sampler, 0, len(profilers))
@@ -70,9 +78,12 @@ func NewProfileListener(profilers ...Profiler) *ProfilerListener {
 		hooks:      make(map[string]*hook),
 		profilers:  profilers,
 		samples:    list.New(),
+		samplesMu:  sync.RWMutex{},
 	}
 }
 
+// Register registers the ProfilerListener to the Wazero context.
+// See: https://github.com/tetratelabs/wazero/blob/c82ad896f6019708f22ddd7826ff47319b7a1e54/experimental/listener.go#L27-L30
 func (p *ProfilerListener) Register(ctx context.Context) context.Context {
 	return context.WithValue(ctx, experimental.FunctionListenerFactoryKey{}, p)
 }
@@ -91,14 +102,20 @@ func (p *ProfilerListener) report(si experimental.StackIterator, values []int64)
 		fn := si.FunctionDefinition()
 		sample.stack = append(sample.stack, fn)
 	}
+	p.samplesMu.Lock()
+	if p.samples == nil {
+		p.samples = list.New()
+	}
 	p.samples.PushBack(sample)
 	if p.samples.Len() >= DefaultMaxStacksCount {
 		e := p.samples.Front()
 		p.samples.Remove(e)
 	}
+	p.samplesMu.Unlock()
 	p.lastStackSize = len(sample.stack)
 }
 
+// BuildProfile builds a pprof Profile from the collected samples. After collection all samples are cleared.
 func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	prof := &profile.Profile{
 		Function:   []*profile.Function{},
@@ -117,6 +134,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 
 	counters := make(map[uint64]entry)
 
+	p.samplesMu.Lock()
 	for e := p.samples.Front(); e != nil; e = e.Next() {
 		locations := []*profile.Location{}
 		h := xxhash.New()
@@ -141,6 +159,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 		}
 	}
 	p.samples = nil
+	p.samplesMu.Unlock()
 
 	for _, count := range counters {
 		prof.Sample = append(prof.Sample, &profile.Sample{
@@ -152,6 +171,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	return prof
 }
 
+// Write writes the collected samples to the given writer.
 func (p *ProfilerListener) Write(w io.Writer) error {
 	prof := p.BuildProfile()
 	return prof.Write(w)
@@ -184,6 +204,7 @@ func locationForCall(p *profile.Profile, moduleName string, index uint32, name s
 	return loc
 }
 
+// NewListener implements experimental.FunctionListenerFactory.
 func (p *ProfilerListener) NewListener(def api.FunctionDefinition) experimental.FunctionListener {
 	funcNames := make([]string, len(p.profilers))
 
@@ -230,6 +251,7 @@ type hook struct {
 	values   []int64
 }
 
+// Before implements experimental.FunctionListener.
 func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
 	imod := mod.(experimental.InternalModule) // TODO: remove those casts by changing api.FunctionDefinition
 	globals := imod.ViewGlobals()
@@ -252,6 +274,7 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 	return ctx
 }
 
+// After implements experimental.FunctionListener.
 func (h *hook) After(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, err error, results []uint64) {
 	// not used
 }
