@@ -11,7 +11,7 @@ type ProfilerCPU struct {
 	Sampling float32
 }
 
-const DefaultCPUSampling = 1.0
+const DefaultCPUSampling = 0.2
 
 func count1(params []uint64, globals []api.Global, mem api.Memory) int64 {
 	return 1
