@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/pprof/profile"
 	wazeroprofiler "github.com/stealthrocket/wazero-profiler"
@@ -25,9 +26,10 @@ func main() {
 }
 
 var (
-	file     = flag.String("file", "", "Filename to write profile to")
-	httpAddr = flag.String("http", "", "HTTP server address")
-	sampling = flag.Float64("sampling", wazeroprofiler.DefaultCPUSampling, "CPU sampling rate")
+	file      = flag.String("file", "", "Filename to write profile to")
+	httpAddr  = flag.String("http", "", "HTTP server address")
+	sampling  = flag.Float64("sampling", wazeroprofiler.DefaultCPUSampling, "CPU sampling rate")
+	profilers = flag.String("profilers", "cpu,mem", "Comma-separated list of profilers to use")
 )
 
 func run() error {
@@ -47,12 +49,20 @@ func run() error {
 		return fmt.Errorf("cannot open WASM file at '%s': %w", wasmPath, err)
 	}
 
-	pl := wazeroprofiler.NewProfileListener(
-		&wazeroprofiler.ProfilerCPU{
-			Sampling: float32(*sampling),
-		},
-		&wazeroprofiler.ProfilerMemory{},
-	)
+	pfs := []wazeroprofiler.Profiler{}
+	pfnames := strings.Split(*profilers, ",")
+	for _, name := range pfnames {
+		switch name {
+		case "cpu":
+			pfs = append(pfs, &wazeroprofiler.ProfilerCPU{
+				Sampling: float32(*sampling),
+			})
+		case "mem":
+			pfs = append(pfs, &wazeroprofiler.ProfilerMemory{})
+		}
+	}
+
+	pl := wazeroprofiler.NewProfileListener(pfs...)
 	ctx = pl.Register(ctx)
 
 	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
