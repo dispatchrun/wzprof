@@ -8,4 +8,4 @@ require (
 	github.com/tetratelabs/wazero v1.0.3
 )
 
-replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230426180513-10d9723a5905
+replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230427213158-ea92fac8b856
