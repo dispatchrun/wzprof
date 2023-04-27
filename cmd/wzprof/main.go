@@ -81,16 +81,29 @@ func run() error {
 		WithArgs(wasmName)
 
 	go func() {
-		instance, err := runtime.InstantiateWithConfig(ctx, wasmCode, config)
+		defer cancel()
+		compiled, err := runtime.CompileModule(ctx, wasmCode)
 		if err != nil {
 			fmt.Println(err)
+			return
+		}
+		pl.PrepareSymbols(compiled)
+
+		defer func() {
+			if err := compiled.Close(ctx); err != nil {
+				fmt.Println(err)
+			}
+		}()
+
+		instance, err := runtime.InstantiateModule(ctx, compiled, config)
+		if err != nil {
+			fmt.Println(err)
+			return
 		}
 
 		if err := instance.Close(ctx); err != nil {
 			fmt.Println(err)
 		}
-
-		cancel()
 	}()
 
 	if *httpAddr != "" {
@@ -108,6 +121,7 @@ func run() error {
 		if err := writeFile(*file, pl.BuildProfile()); err != nil {
 			return err
 		}
+		fmt.Println("profile written to", *file)
 	}
 
 	return nil

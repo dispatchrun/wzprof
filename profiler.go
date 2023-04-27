@@ -3,13 +3,16 @@ package wzprof
 import (
 	"container/list"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/cespare/xxhash"
 	"github.com/google/pprof/profile"
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 )
@@ -42,11 +45,43 @@ type ProfilerListener struct {
 	profileFns map[string]ProfileFunction
 	samplerFns []Sampler
 
-	hooks map[string]*hook
-
+	hooks         map[string]*hook
 	lastStackSize int
 	samples       *list.List
-	samplesMu     sync.RWMutex
+
+	samplesMu sync.RWMutex
+
+	mapper   mapper
+	locCache map[pprofLocationKey]*profile.Location
+}
+
+type pprofLocationKey struct {
+	Module string
+	Index  uint32
+	Name   string
+	PC     uint64
+}
+
+type location struct {
+	File    string
+	Line    int64
+	Column  int64
+	Inlined bool
+	PC      uint64
+}
+
+type mapper interface {
+	Lookup(pc uint64) []location
+}
+
+func (p *ProfilerListener) PrepareSymbols(m wazero.CompiledModule) {
+	var err error
+	sc := m.CustomSections()
+
+	p.mapper, err = newDwarfmapper(sc)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "profiler: could not load dwarf symbols: %s", err)
+	}
 }
 
 // DefaultMaxStacksCount is the default maximum number of stacks to keep in.
@@ -88,19 +123,25 @@ func (p *ProfilerListener) Register(ctx context.Context) context.Context {
 	return context.WithValue(ctx, experimental.FunctionListenerFactoryKey{}, p)
 }
 
+type stackEntry struct {
+	fn api.FunctionDefinition
+	pc uint64
+}
+
 type sample struct {
-	stack  []api.FunctionDefinition
+	stack  []stackEntry
 	values []int64
 }
 
 func (p *ProfilerListener) report(si experimental.StackIterator, values []int64) {
 	sample := sample{
-		stack:  make([]api.FunctionDefinition, 0, p.lastStackSize+1),
+		stack:  make([]stackEntry, 0, p.lastStackSize+1),
 		values: values,
 	}
 	for si.Next() {
 		fn := si.FunctionDefinition()
-		sample.stack = append(sample.stack, fn)
+		pc := si.SourceOffset()
+		sample.stack = append(sample.stack, stackEntry{fn: fn, pc: pc})
 	}
 	p.samplesMu.Lock()
 	if p.samples == nil {
@@ -133,16 +174,21 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	}
 
 	counters := make(map[uint64]entry)
+	bx := make([]byte, 8)
 
 	p.samplesMu.Lock()
 	for e := p.samples.Front(); e != nil; e = e.Next() {
 		locations := []*profile.Location{}
-		h := xxhash.New()
+		h := xxhash.New() // TODO: create once and reset?
 
 		s := e.Value.(sample)
 		for _, f := range s.stack {
-			h.Write([]byte(f.DebugName()))
-			locations = append(locations, locationForCall(prof, f.ModuleName(), f.Index(), f.DebugName()))
+			// TODO: when known, f.pc may be enough
+			// instead of using name.
+			binary.LittleEndian.PutUint64(bx, f.pc)
+			h.Write([]byte(f.fn.Name()))
+			h.Write(bx)
+			locations = append(locations, p.locationForCall(prof, f))
 		}
 
 		sum64 := h.Sum64()
@@ -177,30 +223,77 @@ func (p *ProfilerListener) Write(w io.Writer) error {
 	return prof.Write(w)
 }
 
-func locationForCall(p *profile.Profile, moduleName string, index uint32, name string) *profile.Location {
-	// so far, 1 location = 1 function
-	key := fmt.Sprintf("%s.%s[%d]", moduleName, name, index)
+func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) *profile.Location {
+	if p.locCache == nil {
+		p.locCache = map[pprofLocationKey]*profile.Location{}
+	}
 
-	for _, loc := range p.Location {
-		if loc.Line[0].Function.SystemName == key {
-			return loc
+	locKey := pprofLocationKey{
+		Module: f.fn.ModuleName(),
+		Index:  f.fn.Index(),
+		Name:   f.fn.Name(),
+		PC:     f.pc,
+	}
+
+	if loc, ok := p.locCache[locKey]; ok {
+
+		return loc
+	}
+
+	// Cache miss. Get or create function and all the line
+	// locations associated with inlining.
+
+	var locations []location
+	if p.mapper != nil && f.pc > 0 {
+		locations = p.mapper.Lookup(f.pc)
+		fmt.Println(locations)
+	}
+	if len(locations) == 0 {
+		// If we don't have a source location, attach to a
+		// generic location whithin the function.
+		locations = []location{{}}
+	}
+
+	stableName := f.fn.ModuleName() + "." + f.fn.Name()
+
+	var pprofFn *profile.Function
+	for _, f := range prof.Function {
+		if f.SystemName == stableName {
+			pprofFn = f
+			break
+		}
+	}
+	if pprofFn == nil {
+		pprofFn = &profile.Function{
+			ID:         uint64(len(prof.Function)) + 1, // 0 is reserved by pprof
+			Name:       f.fn.DebugName(),
+			SystemName: stableName,
+			Filename:   locations[0].File,
+		}
+		fmt.Println("created pprof function", *pprofFn, "NAME:", pprofFn.Filename)
+		prof.Function = append(prof.Function, pprofFn)
+	} else {
+		if pprofFn.Filename == "" && locations[0].File != "" {
+			pprofFn.Filename = locations[0].File
 		}
 	}
 
-	fn := &profile.Function{
-		ID:         uint64(len(p.Function)) + 1, // 0 is reserved by pprof
-		Name:       fmt.Sprintf("%s.%s", moduleName, name),
-		SystemName: key,
+	lines := make([]profile.Line, len(locations))
+	for i, s := range locations {
+		lines[len(locations)-i-1] = profile.Line{
+			Function: pprofFn,
+			Line:     s.Line,
+		}
 	}
-	p.Function = append(p.Function, fn)
 
 	loc := &profile.Location{
-		ID: uint64(len(p.Location)) + 1, // 0 is reserved by pprof
-		Line: []profile.Line{{
-			Function: fn,
-		}},
+		ID:      uint64(len(prof.Location)) + 1, // 0 reserved by pprof
+		Line:    lines,
+		Address: locations[0].PC,
 	}
-	p.Location = append(p.Location, loc)
+	prof.Location = append(prof.Location, loc)
+	p.locCache[locKey] = loc
+
 	return loc
 }
 
