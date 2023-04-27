@@ -73,6 +73,10 @@ func NewProfileListener(profilers ...Profiler) *ProfilerListener {
 	}
 }
 
+func (p *ProfilerListener) Register(ctx context.Context) context.Context {
+	return context.WithValue(ctx, experimental.FunctionListenerFactoryKey{}, p)
+}
+
 type sample struct {
 	stack  []api.FunctionDefinition
 	values []int64

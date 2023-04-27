@@ -6,3 +6,5 @@ github.com/google/pprof v0.0.0-20230406165453-00490a63f317 h1:hFhpt7CTmR3DX+b4R1
 github.com/google/pprof v0.0.0-20230406165453-00490a63f317/go.mod h1:79YE0hCXdHag9sBkw2o+N/YnZtTkXi0UT9Nnixa5eYk=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72 h1:qLC7fQah7D6K1B0ujays3HV9gkFtllcxhzImRR7ArPQ=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
+github.com/stealthrocket/wazero v0.0.0-20230426180513-10d9723a5905 h1:7CM+qCtZ3I7pBn4VxzlFO+KsS63J/4rPh7HGl9je0NQ=
+github.com/stealthrocket/wazero v0.0.0-20230426180513-10d9723a5905/go.mod h1:wYx2gNRg8/WihJfSDxA1TIL8H+GkfLYm+bIfbblu9VQ=
