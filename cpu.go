@@ -7,11 +7,11 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
+// ProfilerCPU instruments function calls for cpu_samples.
 type ProfilerCPU struct {
+	// Sampling rate between 0.0 and 0.2.
 	Sampling float32
 }
-
-const DefaultCPUSampling = 0.2
 
 func count1(params []uint64, globals []api.Global, mem api.Memory) int64 {
 	return 1
@@ -34,3 +34,5 @@ func (p *ProfilerCPU) SampleType() profile.ValueType {
 func (p *ProfilerCPU) Sampler() Sampler {
 	return newRandomSampler(time.Now().UnixNano(), p.Sampling)
 }
+
+var _ Profiler = &ProfilerCPU{}

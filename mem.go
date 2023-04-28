@@ -8,6 +8,8 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
+// ProfilerMemory instruments known allocator functions for memory
+// allocations (alloc_space).
 type ProfilerMemory struct{}
 
 func profileStack0int32(params []uint64, globals []api.Global, mem api.Memory) int64 {
@@ -68,3 +70,5 @@ func (p *ProfilerMemory) SampleType() profile.ValueType {
 func (p *ProfilerMemory) Sampler() Sampler {
 	return newAlwaysSampler()
 }
+
+var _ Profiler = &ProfilerMemory{}
