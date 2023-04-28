@@ -25,10 +25,12 @@ func main() {
 	}
 }
 
+const defaultCPUSampling = 0.2
+
 var (
 	file      = flag.String("file", "", "Filename to write profile to")
 	httpAddr  = flag.String("http", "", "HTTP server address")
-	sampling  = flag.Float64("sampling", wzprof.DefaultCPUSampling, "CPU sampling rate")
+	sampling  = flag.Float64("sampling", defaultCPUSampling, "CPU sampling rate")
 	profilers = flag.String("profilers", "cpu,mem", "Comma-separated list of profilers to use")
 )
 

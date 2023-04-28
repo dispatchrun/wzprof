@@ -2,7 +2,10 @@ package wzprof
 
 import "math/rand"
 
+// Sampler is provided to Profilers to decide how often the profiler
+// instrumentation needs to be reported.
 type Sampler interface {
+	// Do returns true if instrumentation needs to be performed.
 	Do() bool
 }
 

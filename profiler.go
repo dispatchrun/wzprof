@@ -17,8 +17,14 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
+// ProfileFunction inspects the state of the wasm module to return a
+// sample value. Implementations of this signature should consider
+// that they are called on the hot path of the profiler, so they
+// should minimize allocations and return as quickly as possible.
 type ProfileFunction func(params []uint64, globals []api.Global, mem api.Memory) int64
 
+// Profiler is provided to NewProfilerListener and called when
+// appropriate to measure samples.
 type Profiler interface {
 	// SampleType is called once initially to register the pprof type of samples
 	// collected by this profiler. Only one type permitted for now.
@@ -39,7 +45,8 @@ type Profiler interface {
 	Listen(name string) string
 }
 
-// ProfilerListener is a FunctionListenerFactory carrying a list of profilers.
+// ProfilerListener is a FunctionListenerFactory injecting a set of
+// Profilers and generates a pprof profile.
 type ProfilerListener struct {
 	profilers  []Profiler
 	profileFns map[string]ProfileFunction
@@ -74,6 +81,9 @@ type mapper interface {
 	Lookup(pc uint64) []location
 }
 
+// PrepareSymbols gives the opportunity to ProfileListener to prepare
+// a suitable symbol mapper for a compiled wasm module. If available,
+// those symbols will be used to provide source-level profiling.
 func (p *ProfilerListener) PrepareSymbols(m wazero.CompiledModule) {
 	var err error
 	sc := m.CustomSections()
@@ -91,10 +101,12 @@ func keyFor(idx int, name string) string {
 	return fmt.Sprintf("%d:%s", idx, name)
 }
 
-// NewProfileListener creates a new ProfilerListener with the given profilers.
-// We currently support two profilers:
-// - ProfilerCPU collects CPU usage samples based on stack counts
-// - ProfilerMemory collects Memory usage based on well known allocation functions
+// NewProfileListener creates a new ProfilerListener with the given
+// profilers. There are two built-in profilers:
+//
+//   - ProfilerCPU collects CPU usage samples based on stack counts
+//   - ProfilerMemory collects Memory usage based on well known
+//     allocation functions
 func NewProfileListener(profilers ...Profiler) *ProfilerListener {
 	profileFns := map[string]ProfileFunction{}
 	samplerFns := make([]Sampler, 0, len(profilers))
@@ -156,7 +168,8 @@ func (p *ProfilerListener) report(si experimental.StackIterator, values []int64)
 	p.lastStackSize = len(sample.stack)
 }
 
-// BuildProfile builds a pprof Profile from the collected samples. After collection all samples are cleared.
+// BuildProfile builds a pprof Profile from the collected
+// samples. After collection all samples are cleared.
 func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	prof := &profile.Profile{
 		Function:   []*profile.Function{},
@@ -295,7 +308,7 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 	return loc
 }
 
-// NewListener implements experimental.FunctionListenerFactory.
+// NewListener implements Wazero's experimental.FunctionListenerFactory.
 func (p *ProfilerListener) NewListener(def api.FunctionDefinition) experimental.FunctionListener {
 	funcNames := make([]string, len(p.profilers))
 
