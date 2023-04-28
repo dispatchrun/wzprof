@@ -16,6 +16,10 @@ func profileStack0int32(params []uint64, globals []api.Global, mem api.Memory) i
 	return int64(int32(params[0]))
 }
 
+func profileStackCalloc(params []uint64, globals []api.Global, mem api.Memory) int64 {
+	return int64(int32(params[0])) * int64(int32(params[1]))
+}
+
 func profileStack1int32(params []uint64, globals []api.Global, mem api.Memory) int64 {
 	return int64(int32(params[1]))
 }
@@ -36,6 +40,7 @@ func (p *ProfilerMemory) Register() map[string]ProfileFunction {
 	return map[string]ProfileFunction{
 		"profileStack0int32":   profileStack0int32,
 		"profileStack1int32":   profileStack1int32,
+		"profileStackCalloc":   profileStackCalloc,
 		"profileGoStack0int32": profileGoStack0int32,
 	}
 }
@@ -46,7 +51,7 @@ func (p *ProfilerMemory) Listen(name string) string {
 	case "malloc":
 		return "profileStack0int32"
 	case "calloc":
-		return "profileStack0int32"
+		return "profileStackCalloc"
 	case "realloc":
 		return "profileStack1int32"
 
