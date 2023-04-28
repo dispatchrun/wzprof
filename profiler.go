@@ -25,6 +25,13 @@ type ProfileFunction func(mod api.Module, params []uint64) int64
 
 // Profiler is provided to NewProfilerListener and called when appropriate to
 // measure samples.
+type ProfileProcessor interface {
+	PreFunction(mod api.Module, params []uint64) int64
+	PostFunction(in int64, results []uint64) int64
+}
+
+// Profiler is provided to NewProfilerListener and called when
+// appropriate to measure samples.
 type Profiler interface {
 	// SampleType is called once initially to register the pprof type of
 	// samples collected by this profiler. Only one type permitted for now.
@@ -35,9 +42,9 @@ type Profiler interface {
 	Sampler() Sampler
 
 	// Register is called at the initialization of the module to register
-	// possible profile functions that can be returned by Listen. Empty
-	// string is not a valid key.
-	Register() map[string]ProfileFunction
+	// possible profile functions that can be returned by Listen. Empty string
+	// is not a valid key.
+	Register() map[string]ProfileProcessor
 
 	// Listen is called at the initialization of the module for each
 	// function 'name' definied in it. Return the name of a function as
@@ -48,9 +55,9 @@ type Profiler interface {
 // ProfilerListener is a FunctionListenerFactory injecting a set of Profilers
 // and generates a pprof profile.
 type ProfilerListener struct {
-	profilers  []Profiler
-	profileFns map[string]ProfileFunction
-	samplerFns []Sampler
+	profilers    []Profiler
+	processorFns map[string]ProfileProcessor
+	samplerFns   []Sampler
 
 	hooks         map[string]*hook
 	lastStackSize int
@@ -112,24 +119,24 @@ func keyFor(idx int, name string) string {
 //   - ProfilerMemory collects Memory usage based on well known allocation
 //     functions
 func NewProfileListener(profilers ...Profiler) *ProfilerListener {
-	profileFns := map[string]ProfileFunction{}
+	processorFns := map[string]ProfileProcessor{}
 	samplerFns := make([]Sampler, 0, len(profilers))
 
 	for i, p := range profilers {
 		fns := p.Register()
 		for name, f := range fns {
-			profileFns[keyFor(i, name)] = f
+			processorFns[keyFor(i, name)] = f
 		}
 		samplerFns = append(samplerFns, p.Sampler())
 	}
 
 	return &ProfilerListener{
-		profileFns: profileFns,
-		samplerFns: samplerFns,
-		hooks:      make(map[string]*hook),
-		profilers:  profilers,
-		samples:    list.New(),
-		samplesMu:  sync.RWMutex{},
+		processorFns: processorFns,
+		samplerFns:   samplerFns,
+		hooks:        make(map[string]*hook),
+		profilers:    profilers,
+		samples:      list.New(),
+		samplesMu:    sync.RWMutex{},
 	}
 }
 
@@ -171,6 +178,20 @@ func (p *ProfilerListener) report(si experimental.StackIterator, values []int64)
 	}
 	p.samplesMu.Unlock()
 	p.lastStackSize = len(sample.stack)
+}
+
+func (p *ProfilerListener) reportSample(s sample) {
+	p.samplesMu.Lock()
+	if p.samples == nil {
+		p.samples = list.New()
+	}
+	p.samples.PushBack(s)
+	if p.samples.Len() >= DefaultMaxStacksCount {
+		e := p.samples.Front()
+		p.samples.Remove(e)
+	}
+	p.samplesMu.Unlock()
+	p.lastStackSize = len(s.stack)
 }
 
 // BuildProfile builds a pprof Profile from the collected
@@ -351,17 +372,17 @@ func (p *ProfilerListener) NewListener(def api.FunctionDefinition) experimental.
 	}
 
 	h := &hook{
-		profiler: p,
-		fns:      make([]ProfileFunction, len(p.profilers)),
-		samplers: make([]Sampler, len(p.profilers)),
-		values:   make([]int64, len(p.profilers)),
+		profiler:   p,
+		processors: make([]ProfileProcessor, len(p.profilers)),
+		samplers:   make([]Sampler, len(p.profilers)),
+		values:     make([]int64, len(p.profilers)),
 	}
 
 	for i, name := range funcNames {
 		if name == "" {
 			continue
 		}
-		h.fns[i] = p.profileFns[keyFor(i, name)]
+		h.processors[i] = p.processorFns[keyFor(i, name)]
 		h.samplers[i] = p.samplerFns[i]
 	}
 
@@ -371,10 +392,24 @@ func (p *ProfilerListener) NewListener(def api.FunctionDefinition) experimental.
 }
 
 type hook struct {
-	profiler *ProfilerListener
-	samplers []Sampler
-	fns      []ProfileFunction
-	values   []int64
+	profiler   *ProfilerListener
+	samplers   []Sampler
+	fns        []ProfileFunction
+	processors []ProfileProcessor
+	values     []int64
+}
+
+func (p *ProfilerListener) createSample(si experimental.StackIterator, values []int64) sample {
+	sample := sample{
+		stack:  make([]stackEntry, 0, p.lastStackSize+1),
+		values: values,
+	}
+	for si.Next() {
+		fn := si.FunctionDefinition()
+		pc := si.SourceOffset()
+		sample.stack = append(sample.stack, stackEntry{fn: fn, pc: pc})
+	}
+	return sample
 }
 
 // Before implements experimental.FunctionListener.
@@ -386,19 +421,31 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 			continue
 		}
 		if sampler.Do() {
-			h.values[i] = h.fns[i](mod, params)
+			h.values[i] = h.processors[i].PreFunction(mod, params)
 			any = true
 		} else {
 			h.values[i] = 0
 		}
 	}
+	var s sample
 	if any {
-		h.profiler.report(si, h.values)
+		s = h.profiler.createSample(si, h.values)
+		ctx = context.WithValue(ctx, "sample", s)
 	}
 	return ctx
 }
 
 // After implements experimental.FunctionListener.
 func (h *hook) After(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, err error, results []uint64) {
-	// not used
+	v := ctx.Value("sample")
+	if v == nil {
+		return
+	}
+	sample := v.(sample)
+	deltas := make([]int64, len(sample.values))
+	for i, processor := range h.processors {
+		deltas[i] = processor.PostFunction(sample.values[i], results)
+	}
+	sample.values = deltas
+	h.profiler.reportSample(sample)
 }

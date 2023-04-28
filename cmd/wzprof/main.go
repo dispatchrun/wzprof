@@ -25,7 +25,7 @@ func main() {
 	}
 }
 
-const defaultCPUSampling = 0.2
+const defaultCPUSampling = 1
 
 type program struct {
 	WasmPath  string
@@ -58,7 +58,15 @@ func (prog program) Execute(ctx context.Context) error {
 		}
 	}
 
-	pl := wzprof.NewProfileListener(pfs...)
+	//pl := wzprof.NewProfileListener(pfs...)
+	pl := wzprof.NewProfileListener(
+		&wzprof.ProfilerCPUTime{
+			Sampling: float32(*sampling),
+		},
+		&wzprof.ProfilerCPU{
+			Sampling: float32(*sampling),
+		},
+	)
 	ctx = pl.Register(ctx)
 
 	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
