@@ -13,7 +13,7 @@ type ProfilerCPU struct {
 	Sampling float32
 }
 
-func count1(params []uint64, globals []api.Global, mem api.Memory) int64 {
+func count1(mod api.Module, params []uint64) int64 {
 	return 1
 }
 

@@ -7,7 +7,7 @@ func TestProfilerMemory_calloc(t *testing.T) {
 	fns := p.Register()
 	name := p.Listen("calloc")
 	pf := fns[name]
-	x := pf([]uint64{42, 11}, nil, nil)
+	x := pf(nil, []uint64{42, 11})
 	b := int64(42 * 11)
 	if x != b {
 		t.Errorf("calloc reported %d; want %d", x, b)
