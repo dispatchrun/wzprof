@@ -9,17 +9,17 @@ import (
 
 // ProfilerCPU instruments function calls for cpu_samples.
 type ProfilerCPUTime struct {
-	// Sampling rate between 0.0 and 0.2.
+	// Sampling rate between 0.0 and 1.0.
 	Sampling float32
 }
 
 type cputime struct{}
 
-func (p cputime) PreFunction(params []uint64, globals []api.Global, mem api.Memory) int64 {
+func (p cputime) Before(params []uint64, globals []api.Global, mem api.Memory) int64 {
 	return time.Now().UnixNano()
 }
 
-func (p cputime) PostFunction(in int64, results []uint64) int64 {
+func (p cputime) After(in int64, results []uint64) int64 {
 	return time.Now().UnixNano() - in
 }
 

@@ -15,11 +15,11 @@ type ProfilerCPU struct {
 
 type cpuprocessor struct{}
 
-func (p cpuprocessor) PreFunction(mod api.Module, params []uint64) int64 {
+func (p cpuprocessor) Before(mod api.Module, params []uint64) int64 {
 	return 1
 }
 
-func (p cpuprocessor) PostFunction(in int64, results []uint64) int64 {
+func (p cpuprocessor) After(in int64, results []uint64) int64 {
 	return in
 }
 

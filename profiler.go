@@ -17,17 +17,17 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
-// ProfileFunction inspects the state of the wasm module to return a sample
-// value. Implementations of this signature should consider that they are called
-// on the hot path of the profiler, so they should minimize allocations and
-// return as quickly as possible.
-type ProfileFunction func(mod api.Module, params []uint64) int64
-
 // Profiler is provided to NewProfilerListener and called when appropriate to
 // measure samples.
 type ProfileProcessor interface {
-	PreFunction(mod api.Module, params []uint64) int64
-	PostFunction(in int64, results []uint64) int64
+	// BeforeFunction inspects the state of the wasm module to return a
+	// sample value. Implementations of this signature should consider
+	// that they are called on the hot path of the profiler, so they
+	// should minimize allocations and return as quickly as possible.
+	Before(mod api.Module, params []uint64) int64
+	// AfterFunction is called right before the hooked function returns.
+	// `in` is the value returned by BeforeFunction.
+	After(in int64, results []uint64) int64
 }
 
 // Profiler is provided to NewProfilerListener and called when
@@ -394,7 +394,6 @@ func (p *ProfilerListener) NewListener(def api.FunctionDefinition) experimental.
 type hook struct {
 	profiler   *ProfilerListener
 	samplers   []Sampler
-	fns        []ProfileFunction
 	processors []ProfileProcessor
 	values     []int64
 }
@@ -421,7 +420,7 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 			continue
 		}
 		if sampler.Do() {
-			h.values[i] = h.processors[i].PreFunction(mod, params)
+			h.values[i] = h.processors[i].Before(mod, params)
 			any = true
 		} else {
 			h.values[i] = 0
@@ -444,7 +443,11 @@ func (h *hook) After(ctx context.Context, mod api.Module, fnd api.FunctionDefini
 	sample := v.(sample)
 	deltas := make([]int64, len(sample.values))
 	for i, processor := range h.processors {
-		deltas[i] = processor.PostFunction(sample.values[i], results)
+		if processor == nil {
+			// FIXME: processor should never be nil here.
+			continue
+		}
+		deltas[i] = processor.After(sample.values[i], results)
 	}
 	sample.values = deltas
 	h.profiler.reportSample(sample)

@@ -15,36 +15,36 @@ type ProfilerMemory struct{}
 
 type profileStack0int32 struct{}
 
-func (p profileStack0int32) PreFunction(mod api.Module, params []uint64) int64 {
+func (p profileStack0int32) Before(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[0]))
 }
-func (p profileStack0int32) PostFunction(in int64, results []uint64) int64 {
+func (p profileStack0int32) After(in int64, results []uint64) int64 {
 	return in
 }
 
 type profileStackCalloc struct{}
 
-func (p profileStackCalloc) PreFunction(mod api.Module, params []uint64) int64 {
+func (p profileStackCalloc) Before(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[0])) * int64(int32(params[1]))
 }
 
-func (profileStackCalloc) PostFunction(in int64, results []uint64) int64 {
+func (profileStackCalloc) After(in int64, results []uint64) int64 {
 	return in
 }
 
 type profileStack1int32 struct{}
 
-func (p profileStack1int32) PreFunction(mod api.Module, params []uint64) int64 {
+func (p profileStack1int32) Before(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[1]))
 }
 
-func (p profileStack1int32) PostFunction(in int64, results []uint64) int64 {
+func (p profileStack1int32) After(in int64, results []uint64) int64 {
 	return in
 }
 
 type profileGoStack0int32 struct{}
 
-func (p profileGoStack0int32) PreFunction(mod api.Module, params []uint64) int64 {
+func (p profileGoStack0int32) Before(mod api.Module, params []uint64) int64 {
 	imod := mod.(experimental.InternalModule)
 	mem := imod.Memory()
 
@@ -58,7 +58,7 @@ func (p profileGoStack0int32) PreFunction(mod api.Module, params []uint64) int64
 	return int64(v)
 }
 
-func (p profileGoStack0int32) PostFunction(in int64, results []uint64) int64 {
+func (p profileGoStack0int32) After(in int64, results []uint64) int64 {
 	return in
 }
 
