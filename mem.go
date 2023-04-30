@@ -6,27 +6,30 @@ import (
 
 	"github.com/google/pprof/profile"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
 // ProfilerMemory instruments known allocator functions for memory
 // allocations (alloc_space).
 type ProfilerMemory struct{}
 
-func profileStack0int32(params []uint64, globals []api.Global, mem api.Memory) int64 {
+func profileStack0int32(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[0]))
 }
 
-func profileStackCalloc(params []uint64, globals []api.Global, mem api.Memory) int64 {
+func profileStackCalloc(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[0])) * int64(int32(params[1]))
 }
 
-func profileStack1int32(params []uint64, globals []api.Global, mem api.Memory) int64 {
+func profileStack1int32(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[1]))
 }
 
-func profileGoStack0int32(params []uint64, globals []api.Global, mem api.Memory) int64 {
+func profileGoStack0int32(mod api.Module, params []uint64) int64 {
+	imod := mod.(experimental.InternalModule)
+	mem := imod.Memory()
 	// TODO: this assumes all values on the stack are 64bits. this is probably wrong.
-	sp := int32(globals[0].Get())
+	sp := int32(imod.Global(0).Get())
 	offset := sp + 8*(int32(0)+1) // +1 for the return address
 	b, ok := mem.Read(uint32(offset), 8)
 	if !ok {

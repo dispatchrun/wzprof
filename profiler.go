@@ -21,7 +21,7 @@ import (
 // sample value. Implementations of this signature should consider
 // that they are called on the hot path of the profiler, so they
 // should minimize allocations and return as quickly as possible.
-type ProfileFunction func(params []uint64, globals []api.Global, mem api.Memory) int64
+type ProfileFunction func(mod api.Module, params []uint64) int64
 
 // Profiler is provided to NewProfilerListener and called when
 // appropriate to measure samples.
@@ -357,16 +357,13 @@ type hook struct {
 
 // Before implements experimental.FunctionListener.
 func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
-	imod := mod.(experimental.InternalModule) // TODO: remove those casts by changing api.FunctionDefinition
-	globals := imod.ViewGlobals()
-	mem := mod.Memory()
 	any := false
 	for i, sampler := range h.samplers {
 		if sampler == nil {
 			continue
 		}
 		if sampler.Do() {
-			h.values[i] = h.fns[i](params, globals, mem)
+			h.values[i] = h.fns[i](mod, params)
 			any = true
 		} else {
 			h.values[i] = 0
