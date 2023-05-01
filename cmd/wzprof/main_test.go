@@ -44,7 +44,7 @@ func TestDataSimple(t *testing.T) {
 
 	for i, e := range expectedTypes {
 		if p.SampleType[i].Type != e {
-			t.Fatalf("expected sample type %d to be %s; was %s", i, e, p.SampleType[0].Type)
+			t.Fatalf("expected sample type %d to be %s; was %s", i, e, p.SampleType[i].Type)
 		}
 	}
 
