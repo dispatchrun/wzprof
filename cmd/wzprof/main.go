@@ -27,37 +27,31 @@ func main() {
 
 const defaultCPUSampling = 0.2
 
-var (
-	file      = flag.String("file", "", "Filename to write profile to")
-	httpAddr  = flag.String("http", "", "HTTP server address")
-	sampling  = flag.Float64("sampling", defaultCPUSampling, "CPU sampling rate")
-	profilers = flag.String("profilers", "cpu,mem", "Comma-separated list of profilers to use")
-)
+type program struct {
+	WasmPath  string
+	File      string
+	HttpAddr  string
+	Sampling  float64
+	Profilers string
+}
 
-func run() error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+func (prog program) Execute(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	flag.Parse()
-
-	args := flag.Args()
-	if len(args) != 1 {
-		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
-	}
-	wasmPath := args[0]
-	wasmName := filepath.Base(wasmPath)
-	wasmCode, err := os.ReadFile(wasmPath)
+	wasmName := filepath.Base(prog.WasmPath)
+	wasmCode, err := os.ReadFile(prog.WasmPath)
 	if err != nil {
-		return fmt.Errorf("cannot open WASM file at '%s': %w", wasmPath, err)
+		return fmt.Errorf("cannot open WASM file at '%s': %w", prog.WasmPath, err)
 	}
 
 	pfs := []wzprof.Profiler{}
-	pfnames := strings.Split(*profilers, ",")
+	pfnames := strings.Split(prog.Profilers, ",")
 	for _, name := range pfnames {
 		switch name {
 		case "cpu":
 			pfs = append(pfs, &wzprof.ProfilerCPU{
-				Sampling: float32(*sampling),
+				Sampling: float32(prog.Sampling),
 			})
 		case "mem":
 			pfs = append(pfs, &wzprof.ProfilerMemory{})
@@ -108,9 +102,9 @@ func run() error {
 		}
 	}()
 
-	if *httpAddr != "" {
+	if prog.HttpAddr != "" {
 		go func() {
-			if err := http.ListenAndServe(*httpAddr, pl); err != nil {
+			if err := http.ListenAndServe(prog.HttpAddr, pl); err != nil {
 				log.Println(err)
 			}
 		}()
@@ -119,14 +113,42 @@ func run() error {
 	<-ctx.Done()
 	cancel()
 
-	if *file != "" {
-		if err := writeFile(*file, pl.BuildProfile()); err != nil {
+	if prog.File != "" {
+		if err := writeFile(prog.File, pl.BuildProfile()); err != nil {
 			return err
 		}
-		fmt.Println("profile written to", *file)
+		fmt.Println("profile written to", prog.File)
 	}
 
 	return nil
+}
+
+func run() error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	var (
+		file      = flag.String("file", "", "Filename to write profile to")
+		httpAddr  = flag.String("http", "", "HTTP server address")
+		sampling  = flag.Float64("sampling", defaultCPUSampling, "CPU sampling rate")
+		profilers = flag.String("profilers", "cpu,mem", "Comma-separated list of profilers to use")
+	)
+
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) != 1 {
+		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
+	}
+	wasmPath := args[0]
+
+	return program{
+		WasmPath:  wasmPath,
+		File:      *file,
+		HttpAddr:  *httpAddr,
+		Sampling:  *sampling,
+		Profilers: *profilers,
+	}.Execute(ctx)
 }
 
 func writeFile(fname string, p *profile.Profile) error {

@@ -17,17 +17,17 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
-// ProfileFunction inspects the state of the wasm module to return a
-// sample value. Implementations of this signature should consider
-// that they are called on the hot path of the profiler, so they
-// should minimize allocations and return as quickly as possible.
+// ProfileFunction inspects the state of the wasm module to return a sample
+// value. Implementations of this signature should consider that they are called
+// on the hot path of the profiler, so they should minimize allocations and
+// return as quickly as possible.
 type ProfileFunction func(mod api.Module, params []uint64) int64
 
-// Profiler is provided to NewProfilerListener and called when
-// appropriate to measure samples.
+// Profiler is provided to NewProfilerListener and called when appropriate to
+// measure samples.
 type Profiler interface {
-	// SampleType is called once initially to register the pprof type of samples
-	// collected by this profiler. Only one type permitted for now.
+	// SampleType is called once initially to register the pprof type of
+	// samples collected by this profiler. Only one type permitted for now.
 	SampleType() profile.ValueType
 
 	// Sampler is called once initially to register which sampler to use for
@@ -35,18 +35,18 @@ type Profiler interface {
 	Sampler() Sampler
 
 	// Register is called at the initialization of the module to register
-	// possible profile functions that can be returned by Listen. Empty string
-	// is not a valid key.
+	// possible profile functions that can be returned by Listen. Empty
+	// string is not a valid key.
 	Register() map[string]ProfileFunction
 
-	// Listen is called at the initialization of the module for each function
-	// 'name' definied in it. Return the name of a function as defined in
-	// Register, or empty string to not listen.
+	// Listen is called at the initialization of the module for each
+	// function 'name' definied in it. Return the name of a function as
+	// defined in Register, or empty string to not listen.
 	Listen(name string) string
 }
 
-// ProfilerListener is a FunctionListenerFactory injecting a set of
-// Profilers and generates a pprof profile.
+// ProfilerListener is a FunctionListenerFactory injecting a set of Profilers
+// and generates a pprof profile.
 type ProfilerListener struct {
 	profilers  []Profiler
 	profileFns map[string]ProfileFunction
@@ -81,9 +81,9 @@ type mapper interface {
 	Lookup(pc uint64) []location
 }
 
-// PrepareSymbols gives the opportunity to ProfileListener to prepare
-// a suitable symbol mapper for a compiled wasm module. If available,
-// those symbols will be used to provide source-level profiling.
+// PrepareSymbols gives the opportunity to ProfileListener to prepare a suitable
+// symbol mapper for a compiled wasm module. If available, those symbols will be
+// used to provide source-level profiling.
 func (p *ProfilerListener) PrepareSymbols(m wazero.CompiledModule) {
 	var err error
 	sc := m.CustomSections()
@@ -101,12 +101,12 @@ func keyFor(idx int, name string) string {
 	return fmt.Sprintf("%d:%s", idx, name)
 }
 
-// NewProfileListener creates a new ProfilerListener with the given
-// profilers. There are two built-in profilers:
+// NewProfileListener creates a new ProfilerListener with the given profilers.
+// There are two built-in profilers:
 //
 //   - ProfilerCPU collects CPU usage samples based on stack counts
-//   - ProfilerMemory collects Memory usage based on well known
-//     allocation functions
+//   - ProfilerMemory collects Memory usage based on well known allocation
+//     functions
 func NewProfileListener(profilers ...Profiler) *ProfilerListener {
 	profileFns := map[string]ProfileFunction{}
 	samplerFns := make([]Sampler, 0, len(profilers))
@@ -148,8 +148,9 @@ type sample struct {
 func (p *ProfilerListener) report(si experimental.StackIterator, values []int64) {
 	sample := sample{
 		stack:  make([]stackEntry, 0, p.lastStackSize+1),
-		values: values,
+		values: make([]int64, len(values)),
 	}
+	copy(sample.values, values)
 	for si.Next() {
 		fn := si.FunctionDefinition()
 		pc := si.SourceOffset()
@@ -201,7 +202,8 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 			binary.LittleEndian.PutUint64(bx, f.pc)
 			h.Write([]byte(f.fn.Name()))
 			h.Write(bx)
-			locations = append(locations, p.locationForCall(prof, f))
+			loc := p.locationForCall(prof, f)
+			locations = append(locations, loc)
 		}
 
 		sum64 := h.Sum64()
@@ -217,6 +219,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 			e.counts[i] += c
 		}
 	}
+
 	p.samples = nil
 	p.samplesMu.Unlock()
 
@@ -249,7 +252,6 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 	}
 
 	if loc, ok := p.locCache[locKey]; ok {
-
 		return loc
 	}
 
@@ -300,7 +302,7 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 	loc := &profile.Location{
 		ID:      uint64(len(prof.Location)) + 1, // 0 reserved by pprof
 		Line:    lines,
-		Address: locations[0].PC,
+		Address: f.pc,
 	}
 	prof.Location = append(prof.Location, loc)
 	p.locCache[locKey] = loc
@@ -360,6 +362,7 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 	any := false
 	for i, sampler := range h.samplers {
 		if sampler == nil {
+			h.values[i] = 0
 			continue
 		}
 		if sampler.Do() {
