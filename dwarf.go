@@ -79,7 +79,6 @@ func newDwarfmapper(sections []api.CustomSection) (mapper, error) {
 		case dwarf.TagCompileUnit:
 		case dwarf.TagInlinedSubroutine:
 		default:
-			r.SkipChildren()
 			continue
 		}
 
@@ -235,11 +234,12 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 			line, _ := f.Val(dwarf.AttrCallLine).(int64)
 			col, _ := f.Val(dwarf.AttrCallLine).(int64)
 			locations = append(locations, location{
-				File:    file.Name,
-				Line:    line,
-				Column:  col,
-				Inlined: i != 0,
-				PC:      pc,
+				File:     file.Name,
+				Line:     line,
+				Column:   col,
+				Inlined:  i != 0,
+				PC:       pc,
+				Function: d.stableNameForSubprogram(f),
 			})
 		}
 	}
@@ -251,4 +251,28 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 type line struct {
 	Pos     dwarf.LineReaderPos
 	Address uint64
+}
+
+func (d *dwarfmapper) stableNameForSubprogram(e *dwarf.Entry) string {
+	// If an inlined function, grab the name from the origin.
+	var err error
+	r := d.d.Reader()
+	for {
+		ao, ok := e.Val(dwarf.AttrAbstractOrigin).(dwarf.Offset)
+		if !ok {
+			break
+		}
+		r.Seek(ao)
+		e, err = r.Next()
+		if err != nil {
+			// malformed dwarf
+			break
+		}
+	}
+	// Otherwise just return the name of the subprogram.
+	name, _ := e.Val(dwarf.AttrLinkageName).(string)
+	if name == "" {
+		name, _ = e.Val(dwarf.AttrName).(string)
+	}
+	return name
 }
