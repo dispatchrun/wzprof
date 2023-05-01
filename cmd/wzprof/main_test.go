@@ -63,34 +63,33 @@ func TestDataSimple(t *testing.T) {
 		{
 			[]int64{1, 10},
 			[]frame{
-				{".malloc", 0, false},
-				{".func1", 6, false},
-				{".main", 34, false},
-				{".__main_void", 0, false},
-				{"._start", 0, false},
+				{"malloc", 0, false},
+				{"func1", 6, false},
+				{"main", 34, false},
+				{"__main_void", 0, false},
+				{"_start", 0, false},
 			},
 		},
 		{
 			[]int64{1, 20},
 			[]frame{
-				{".malloc", 0, false},
-				{".func21", 12, false},
-				{".func2", 18, false},
-				{".main", 35, false},
-				{".__main_void", 0, false},
-				{"._start", 0, false},
+				{"malloc", 0, false},
+				{"func21", 12, false},
+				{"func2", 18, false},
+				{"main", 35, false},
+				{"__main_void", 0, false},
+				{"_start", 0, false},
 			},
 		},
 		{
 			[]int64{1, 30},
 			[]frame{
-				{".malloc", 0, false},
-				// TODO: inlining does not seem to work with this example
-				// {".func31", 23, true},
-				{".func3", 23, false},
-				{".main", 36, false},
-				{".__main_void", 0, false},
-				{"._start", 0, false},
+				{"malloc", 0, false},
+				{"func31", 29, true},
+				{"func3", 23, false},
+				{"main", 36, false},
+				{"__main_void", 0, false},
+				{"_start", 0, false},
 			},
 		},
 	}
@@ -102,11 +101,15 @@ expected:
 		for si, actual := range p.Sample {
 			stack := expected.stack
 			for _, loc := range actual.Location {
-				for _, line := range loc.Line {
+				for i, line := range loc.Line {
 					if len(stack) == 0 {
 						continue sample
 					}
 					if line.Function.Name == stack[0].name && line.Line == stack[0].line {
+						inline := i < len(loc.Line)-1
+						if inline != stack[0].inlined {
+							t.Errorf("stack frame was supposed to be inlined %t; was %t", stack[0].inlined, inline)
+						}
 						stack = stack[1:]
 					} else {
 						continue sample

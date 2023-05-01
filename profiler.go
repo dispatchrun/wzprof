@@ -75,6 +75,9 @@ type location struct {
 	Column  int64
 	Inlined bool
 	PC      uint64
+	// Linkage Name if present, Name otherwise.
+	// Only present for inlined functions.
+	Function string
 }
 
 type mapper interface {
@@ -268,34 +271,34 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 		locations = []location{{}}
 	}
 
-	stableName := f.fn.ModuleName() + "." + f.fn.Name()
-
-	var pprofFn *profile.Function
-	for _, f := range prof.Function {
-		if f.SystemName == stableName {
-			pprofFn = f
-			break
-		}
-	}
-	if pprofFn == nil {
-		pprofFn = &profile.Function{
-			ID:         uint64(len(prof.Function)) + 1, // 0 is reserved by pprof
-			Name:       f.fn.DebugName(),
-			SystemName: stableName,
-			Filename:   locations[0].File,
-		}
-		prof.Function = append(prof.Function, pprofFn)
-	} else {
-		if pprofFn.Filename == "" && locations[0].File != "" {
-			pprofFn.Filename = locations[0].File
-		}
-	}
+	locations[0].Function = f.fn.Name()
 
 	lines := make([]profile.Line, len(locations))
-	for i, s := range locations {
+
+	for i, loc := range locations {
+		var pprofFn *profile.Function
+		for _, f := range prof.Function {
+			if f.SystemName == loc.Function {
+				pprofFn = f
+				break
+			}
+		}
+		if pprofFn == nil {
+			pprofFn = &profile.Function{
+				ID:         uint64(len(prof.Function)) + 1, // 0 is reserved by pprof
+				Name:       loc.Function,
+				SystemName: loc.Function,
+				Filename:   loc.File,
+			}
+			prof.Function = append(prof.Function, pprofFn)
+		} else {
+			if pprofFn.Filename == "" && locations[0].File != "" {
+				pprofFn.Filename = locations[0].File
+			}
+		}
 		lines[len(locations)-i-1] = profile.Line{
 			Function: pprofFn,
-			Line:     s.Line,
+			Line:     loc.Line,
 		}
 	}
 
