@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"os"
+	"log"
 	"strings"
 	"sync"
 
@@ -103,7 +103,7 @@ func (p *ProfilerListener) PrepareSymbols(m wazero.CompiledModule) {
 
 	p.mapper, err = newDwarfmapper(sc)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "profiler: could not load dwarf symbols: %s", err)
+		log.Printf("profiler: could not load dwarf symbols: %s", err)
 	}
 }
 

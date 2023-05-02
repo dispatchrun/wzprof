@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -123,7 +124,6 @@ func (prog program) Execute(ctx context.Context) error {
 		if err := writeFile(prog.File, pl.BuildProfile()); err != nil {
 			return err
 		}
-		fmt.Println("profile written to", prog.File)
 	}
 
 	return nil
@@ -134,14 +134,20 @@ func run() error {
 	defer cancel()
 
 	var (
-		file      = flag.String("file", "", "Filename to write profile to")
-		httpAddr  = flag.String("http", "", "HTTP server address")
+		file      = flag.String("pprof-file", "", "Filename to write profile to")
+		httpAddr  = flag.String("pprof-addr", "", "HTTP server address")
 		sampling  = flag.Float64("sampling", defaultCPUSampling, "CPU sampling rate")
-		profilers = flag.String("profilers", "cpu,mem", "Comma-separated list of profilers to use")
+		profilers = flag.String("profilers", "cputime,cpu,mem", "Comma-separated list of profilers to use")
 		mounts    = flag.StringSlice("mount", []string{}, "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro)")
+		verbose   = flag.Bool("verbose", false, "Verbose logging")
 	)
 
 	flag.Parse()
+
+	log.Default().SetOutput(io.Discard)
+	if *verbose {
+		log.Default().SetOutput(os.Stderr)
+	}
 
 	args := flag.Args()
 	if len(args) != 1 {
@@ -160,6 +166,7 @@ func run() error {
 }
 
 func writeFile(fname string, p *profile.Profile) error {
+	log.Printf("writing profile to %s", fname)
 	f, err := os.Create(fname)
 	if err != nil {
 		return err
