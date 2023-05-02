@@ -61,7 +61,7 @@ runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
 #### Connect to running pprof server
 
 ```
-wzprof -pprof-addr=:8080 path/to/guest.wasm
+wzprof --pprof-addr=:8080 path/to/guest.wasm
 ```
 
 ```
@@ -71,7 +71,7 @@ go tool pprof -http=:3030 http://localhost:8080
 #### Run program to completion with profiling
 
 ```
-wzprof -pprof-file=profile.pb.gz path/to/guest.wasm
+wzprof --pprof-file=profile.pb.gz path/to/guest.wasm
 ```
 
 ## Profilers

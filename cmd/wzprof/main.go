@@ -26,7 +26,7 @@ func main() {
 	}
 }
 
-const defaultCPUSampling = 1
+const defaultCPUSampling = 0.2
 
 type program struct {
 	WasmPath  string
