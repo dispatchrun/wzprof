@@ -27,7 +27,7 @@ type ProfileProcessor interface {
 	Before(mod api.Module, params []uint64) int64
 	// AfterFunction is called right before the hooked function returns.
 	// `in` is the value returned by BeforeFunction.
-	After(in int64, results []uint64) int64
+	After(before int64, results []uint64) int64
 }
 
 // Profiler is provided to NewProfilerListener and called when
@@ -154,6 +154,7 @@ type stackEntry struct {
 type sample struct {
 	stack  []stackEntry
 	values []int64
+	isIO   bool
 }
 
 func (p *ProfilerListener) report(si experimental.StackIterator, values []int64) {
@@ -194,6 +195,11 @@ func (p *ProfilerListener) reportSample(s sample) {
 	p.lastStackSize = len(s.stack)
 }
 
+type offCPULocations struct {
+	location *profile.Location
+	val      int64
+}
+
 // BuildProfile builds a pprof Profile from the collected
 // samples. After collection all samples are cleared.
 func (p *ProfilerListener) BuildProfile() *profile.Profile {
@@ -215,6 +221,8 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	counters := make(map[uint64]entry)
 	bx := make([]byte, 8)
 
+	var offLocations []offCPULocations
+
 	p.samplesMu.Lock()
 	for e := p.samples.Front(); e != nil; e = e.Next() {
 		locations := []*profile.Location{}
@@ -229,6 +237,13 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 			h.Write(bx)
 			loc := p.locationForCall(prof, f)
 			locations = append(locations, loc)
+		}
+
+		if s.isIO {
+			offLocations = append(offLocations, offCPULocations{
+				location: locations[0],
+				val:      s.values[0],
+			})
 		}
 
 		sum64 := h.Sum64()
@@ -255,7 +270,58 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 		})
 	}
 
+	findAllOffCPU(prof, offLocations)
+
 	return prof
+}
+
+func findAllOffCPU(prof *profile.Profile, offLocations []offCPULocations) {
+	// TODO: rebase on main and review the profiler tree to understand where we need
+	// to substrac the off cpu time.
+	println("total samples", len(prof.Sample))
+	println("total off cpu locations", len(offLocations))
+	containLoc := func(locations []*profile.Location, loc *profile.Location) (*profile.Location, bool) {
+		for _, l := range locations {
+			if l == loc {
+				return l, true
+			}
+		}
+		return nil, false
+	}
+
+	finalLocations := []offCPULocations{}
+
+	for _, loc := range offLocations {
+		for _, sample := range prof.Sample {
+			if _, ok := containLoc(sample.Location, loc.location); ok {
+				//sample.Value[0] -= loc.val
+				//for _, line := range l.Line {
+				//	println("->", line.Function.Name)
+				//}
+				for _, location := range sample.Location {
+					finalLocations = append(finalLocations, offCPULocations{
+						location: location,
+						val:      loc.val,
+					})
+					//for _, line := range location.Line {
+					//	println("::", line.Function.Name)
+					//}
+				}
+			}
+		}
+	}
+	println("final locations", len(finalLocations))
+	i := 0
+	for _, loc := range finalLocations {
+		for _, sample := range prof.Sample {
+			if sample.Location[0] == loc.location {
+				i++
+				sample.Value[0] -= loc.val
+			}
+
+		}
+	}
+	println("updated locations", i)
 }
 
 // Write writes the collected samples to the given writer.
@@ -429,6 +495,9 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 	var s sample
 	if any {
 		s = h.profiler.createSample(si, h.values)
+		if fnd.GoFunction() != nil {
+			s.isIO = true
+		}
 		ctx = context.WithValue(ctx, "sample", s)
 	}
 	return ctx
@@ -448,6 +517,7 @@ func (h *hook) After(ctx context.Context, mod api.Module, fnd api.FunctionDefini
 			continue
 		}
 		deltas[i] = processor.After(sample.values[i], results)
+
 	}
 	sample.values = deltas
 	h.profiler.reportSample(sample)
