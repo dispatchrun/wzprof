@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 
@@ -18,14 +19,21 @@ type entryatrange struct {
 	Entry *dwarf.Entry
 }
 
-// dwarfmapper is adapted from the wazero DWARFLines.Line
-// implementation, with a more aggressive caching strategy.
+type subprogram struct {
+	Entry     *dwarf.Entry
+	CU        *dwarf.Entry
+	Inlines   []*dwarf.Entry
+	Namespace string
+}
+
+type subprogramRange struct {
+	Range      pcrange
+	Subprogram *subprogram
+}
+
 type dwarfmapper struct {
-	d *dwarf.Data
-	// Potentially overlapping sequence of ranges sorted by start
-	// pc that map to CompileUnit or inlined entries.
-	compileUnits []entryatrange
-	inlinedFuncs []entryatrange
+	d           *dwarf.Data
+	subprograms []subprogramRange
 }
 
 func newDwarfmapper(sections []api.CustomSection) (mapper, error) {
@@ -66,60 +74,135 @@ func newDwarfmapper(sections []api.CustomSection) (mapper, error) {
 
 	r := d.Reader()
 
-	compileUnits := []entryatrange{}
-	inlinedFuncs := []entryatrange{}
-
-	for {
-		ent, err := r.Next()
-		if err != nil || ent == nil {
-			break
-		}
-
-		switch ent.Tag {
-		case dwarf.TagCompileUnit:
-		case dwarf.TagInlinedSubroutine:
-		default:
-			continue
-		}
-
-		ranges, err := d.Ranges(ent)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "profiler: dwarf: failed to read ranges: %s\n", err)
-			continue
-		}
-
-		if ent.Tag == dwarf.TagCompileUnit {
-			for _, pcr := range ranges {
-				compileUnits = append(compileUnits, entryatrange{pcr, ent})
-			}
-		} else if ent.Tag == dwarf.TagInlinedSubroutine {
-			for _, pcr := range ranges {
-				inlinedFuncs = append(inlinedFuncs, entryatrange{pcr, ent})
-			}
-		} else {
-			panic("bug")
-		}
-	}
-
-	sort.Slice(compileUnits, func(i, j int) bool {
-		return compileUnits[i].Range[0] < compileUnits[j].Range[0]
-	})
-	// Inlined functions are present in dwarf in order of
-	// inlining. Functions inlined at a specific point will have
-	// the same range, so it is important to preserve order, hence
-	// the stable sort.
-	sort.SliceStable(inlinedFuncs, func(i, j int) bool {
-		return inlinedFuncs[i].Range[0] < inlinedFuncs[j].Range[0]
-	})
+	p := dwarfparser{d: d, r: r}
+	subprograms := p.Parse()
 
 	dm := &dwarfmapper{
-		d: d,
-
-		compileUnits: compileUnits,
-		inlinedFuncs: inlinedFuncs,
+		d:           d,
+		subprograms: subprograms,
 	}
 
 	return dm, nil
+}
+
+type dwarfparser struct {
+	d *dwarf.Data
+	r *dwarf.Reader
+
+	subprograms []subprogramRange
+}
+
+func (d *dwarfparser) Parse() []subprogramRange {
+	for {
+		ent, err := d.r.Next()
+		if err != nil || ent == nil {
+			break
+		}
+		if ent.Tag == dwarf.TagCompileUnit {
+			d.parseCompileUnit(ent, "")
+		} else {
+			d.r.SkipChildren()
+		}
+	}
+	return d.subprograms
+}
+
+func (d *dwarfparser) parseCompileUnit(cu *dwarf.Entry, ns string) {
+	// Assumption is that r has just read the top level entry of the CU (or
+	// possibly a namespace), that is cu.
+	d.parseAny(cu, ns, cu)
+}
+
+func (d *dwarfparser) parseAny(cu *dwarf.Entry, ns string, e *dwarf.Entry) {
+	// Assumption is that r has just read the top level entry e.
+
+	for e.Children {
+		ent, err := d.r.Next()
+		if err != nil || ent == nil {
+			return
+		}
+
+		switch ent.Tag {
+		case 0:
+			// end of block
+			return
+		case dwarf.TagSubprogram:
+			d.parseSubprogram(cu, ns, ent)
+		case dwarf.TagNamespace:
+			d.parseNamespace(cu, ns, ent)
+		default:
+			d.parseAny(cu, ns, ent)
+		}
+	}
+}
+
+func (d *dwarfparser) parseNamespace(cu *dwarf.Entry, ns string, e *dwarf.Entry) {
+	// Assumption is that r has just read the top level entry of this
+	// namespace, which is e.
+
+	name, ok := e.Val(dwarf.AttrName).(string)
+	if ok {
+		ns += name + ":" // TODO: string builder.
+	}
+	d.parseCompileUnit(cu, ns)
+}
+
+func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry) {
+	// Assumption is r has just read the top entry of the subprogram, which
+	// is e.
+
+	var inlines []*dwarf.Entry
+
+	for e.Children {
+		ent, err := d.r.Next()
+		if err != nil || ent == nil {
+			break
+		}
+		if ent.Tag == 0 {
+			break
+		}
+		if ent.Tag != dwarf.TagInlinedSubroutine {
+			d.r.SkipChildren()
+			continue
+		}
+		inlines = append(inlines, ent)
+		// Inlines can have children that describe which variables were
+		// used during inlining.
+		d.r.SkipChildren()
+	}
+
+	ranges, err := d.d.Ranges(e)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "profiler: dwarf: failed to read ranges: %s\n", err)
+		return
+	}
+
+	spgm := &subprogram{
+		Entry:     e,
+		CU:        cu,
+		Inlines:   inlines,
+		Namespace: ns,
+	}
+
+	if len(ranges) == 0 {
+		// If there is no range provided by dwarf, attach this
+		// subprogram to an artificial empty range unlikely to be used.
+		// This is so that we still have a record of the funciton in the
+		// subprograms collection, as that's where the name resolution
+		// for inline functions searches for the inlined function.
+		// Notably, it's likely that a subprogram without range
+		// represent a function that has only been inlined. This
+		// situation is temporary until we rework thie subprograms data
+		// structure.
+		ranges = append(ranges, pcrange{math.MaxUint32, math.MaxUint32})
+	}
+
+	for _, pcr := range ranges {
+		d.subprograms = append(d.subprograms, subprogramRange{
+			Range:      pcr,
+			Subprogram: spgm,
+		})
+	}
 }
 
 // Lookup returns a list of function locations for a given program
@@ -128,21 +211,21 @@ func newDwarfmapper(sections []api.CustomSection) (mapper, error) {
 // be resolved in the dwarf data.
 func (d *dwarfmapper) Lookup(pc uint64) []location {
 	// TODO: replace with binary search
-	var cu *dwarf.Entry
 
-	i := 0
-	for i := range d.compileUnits {
-		if d.compileUnits[i].Range[0] <= pc && pc <= d.compileUnits[i].Range[1] {
-			cu = d.compileUnits[i].Entry
+	var spgm *subprogram
+
+	for _, sr := range d.subprograms {
+		if sr.Range[0] <= pc && pc <= sr.Range[1] {
+			spgm = sr.Subprogram
 			break
 		}
 	}
-	if cu == nil {
-		// no compile unit contains this pc
+
+	if spgm == nil {
 		return nil
 	}
 
-	lr, err := d.d.LineReader(cu)
+	lr, err := d.d.LineReader(spgm.CU)
 	if err != nil || lr == nil {
 		fmt.Fprintf(os.Stderr, "profiler: dwarf: failed to read lines: %s\n", err)
 		return nil
@@ -166,7 +249,7 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i].Address < lines[j].Address })
 
-	i = sort.Search(len(lines), func(i int) bool { return lines[i].Address >= pc })
+	i := sort.Search(len(lines), func(i int) bool { return lines[i].Address >= pc })
 	if i == len(lines) {
 		// no line information for this pc.
 		return nil
@@ -196,36 +279,23 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 		panic("bug")
 	}
 
-	// now find inlined subprograms
-	var inlinedEntries []entryatrange
-	startIdx := sort.Search(len(d.inlinedFuncs), func(i int) bool {
-		return d.inlinedFuncs[i].Range[0] <= pc && pc <= d.inlinedFuncs[i].Range[1]
-	})
-	if startIdx != len(d.inlinedFuncs) {
-		endIdx := startIdx + 1
-		for ; endIdx < len(d.inlinedFuncs); endIdx++ {
-			if d.inlinedFuncs[endIdx].Range[0] <= pc && pc <= d.inlinedFuncs[endIdx].Range[1] {
-				continue
-			}
-			break
-		}
-		inlinedEntries = d.inlinedFuncs[startIdx:endIdx]
-	}
-
-	locations := make([]location, 0, 1+len(inlinedEntries))
-
+	human, stable := d.namesForSubprogram(spgm.Entry, spgm)
+	locations := make([]location, 0, 1+len(spgm.Inlines))
 	locations = append(locations, location{
-		File:    le.File.Name,
-		Line:    int64(le.Line),
-		Column:  int64(le.Column),
-		Inlined: len(inlinedEntries) > 0,
-		PC:      pc,
+		File:       le.File.Name,
+		Line:       int64(le.Line),
+		Column:     int64(le.Column),
+		Inlined:    len(spgm.Inlines) > 0,
+		PC:         pc,
+		HumanName:  human,
+		StableName: stable,
 	})
 
-	if len(inlinedEntries) > 0 {
+	if len(spgm.Inlines) > 0 {
 		files := lr.Files()
-		for i := len(inlinedEntries) - 1; i >= 0; i-- {
-			f := inlinedEntries[i].Entry
+		for i := len(spgm.Inlines) - 1; i >= 0; i-- {
+			// TODO: check pc is in range of inline?
+			f := spgm.Inlines[i]
 			fileIdx, ok := f.Val(dwarf.AttrCallFile).(int64)
 			if !ok || fileIdx >= int64(len(files)) {
 				break
@@ -233,13 +303,15 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 			file := files[fileIdx]
 			line, _ := f.Val(dwarf.AttrCallLine).(int64)
 			col, _ := f.Val(dwarf.AttrCallLine).(int64)
+			human, stable := d.namesForSubprogram(f, nil)
 			locations = append(locations, location{
-				File:     file.Name,
-				Line:     line,
-				Column:   col,
-				Inlined:  i != 0,
-				PC:       pc,
-				Function: d.stableNameForSubprogram(f),
+				File:       file.Name,
+				Line:       line,
+				Column:     col,
+				Inlined:    i != 0,
+				PC:         pc,
+				StableName: stable,
+				HumanName:  human,
 			})
 		}
 	}
@@ -253,7 +325,12 @@ type line struct {
 	Address uint64
 }
 
-func (d *dwarfmapper) stableNameForSubprogram(e *dwarf.Entry) string {
+// Returns a human-readable name and the name the most likely to match the one
+// used in the wasm module. Walks up the inlining chain.
+//
+// Subprogram is optional. This function will look for the associated subprogram
+// if spgm is nil.
+func (d *dwarfmapper) namesForSubprogram(e *dwarf.Entry, spgm *subprogram) (string, string) {
 	// If an inlined function, grab the name from the origin.
 	var err error
 	r := d.d.Reader()
@@ -269,10 +346,31 @@ func (d *dwarfmapper) stableNameForSubprogram(e *dwarf.Entry) string {
 			break
 		}
 	}
-	// Otherwise just return the name of the subprogram.
-	name, _ := e.Val(dwarf.AttrLinkageName).(string)
-	if name == "" {
-		name, _ = e.Val(dwarf.AttrName).(string)
+
+	// TODO: index
+	if spgm == nil {
+		for _, s := range d.subprograms {
+			if s.Subprogram.Entry.Offset == e.Offset {
+				spgm = s.Subprogram
+				break
+			}
+		}
 	}
-	return name
+
+	var ns string
+	if spgm != nil {
+		ns = spgm.Namespace
+	} else {
+
+		//		panic("spgm not found")
+	}
+
+	name, _ := e.Val(dwarf.AttrName).(string)
+	name = ns + name
+	stableName, ok := e.Val(dwarf.AttrLinkageName).(string)
+	if !ok {
+		stableName = name
+	}
+
+	return name, stableName
 }

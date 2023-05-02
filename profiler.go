@@ -77,7 +77,8 @@ type location struct {
 	PC      uint64
 	// Linkage Name if present, Name otherwise.
 	// Only present for inlined functions.
-	Function string
+	StableName string
+	HumanName  string
 }
 
 type mapper interface {
@@ -260,25 +261,34 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 
 	// Cache miss. Get or create function and all the line
 	// locations associated with inlining.
-
 	var locations []location
+	mapperFound := false
 	if p.mapper != nil && f.pc > 0 {
 		locations = p.mapper.Lookup(f.pc)
+		if len(locations) > 0 {
+			mapperFound = true
+		}
 	}
 	if len(locations) == 0 {
 		// If we don't have a source location, attach to a
 		// generic location whithin the function.
 		locations = []location{{}}
 	}
-
-	locations[0].Function = f.fn.Name()
+	// Provide defaults in case we couldn't resolve DWARF informations for
+	// the main function call's PC.
+	if locations[0].StableName == "" {
+		locations[0].StableName = f.fn.Name()
+	}
+	if locations[0].HumanName == "" {
+		locations[0].HumanName = f.fn.Name()
+	}
 
 	lines := make([]profile.Line, len(locations))
 
 	for i, loc := range locations {
 		var pprofFn *profile.Function
 		for _, f := range prof.Function {
-			if f.SystemName == loc.Function {
+			if f.SystemName == loc.StableName {
 				pprofFn = f
 				break
 			}
@@ -286,16 +296,23 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 		if pprofFn == nil {
 			pprofFn = &profile.Function{
 				ID:         uint64(len(prof.Function)) + 1, // 0 is reserved by pprof
-				Name:       loc.Function,
-				SystemName: loc.Function,
+				Name:       loc.HumanName,
+				SystemName: loc.StableName,
 				Filename:   loc.File,
 			}
 			prof.Function = append(prof.Function, pprofFn)
-		} else {
-			if pprofFn.Filename == "" && locations[0].File != "" {
-				pprofFn.Filename = locations[0].File
-			}
+		} else if mapperFound {
+			// Sometimes the function had to be created while the PC
+			// wasn't found by the symbol mapper. Attempt to correct
+			// it if we had a successful match this time.
+			pprofFn.Name = locations[i].HumanName
+			pprofFn.SystemName = locations[i].StableName
+			pprofFn.Filename = locations[i].File
+
 		}
+		// Pprof expects lines to start with the root of the inlined
+		// calls. DWARF encodes that information the other way around,
+		// so we fill lines backwards.
 		lines[len(locations)-i-1] = profile.Line{
 			Function: pprofFn,
 			Line:     loc.Line,

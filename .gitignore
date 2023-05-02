@@ -16,3 +16,5 @@
 
 # Emacs
 *~
+
+internal/testdata/rust/*/target/*
