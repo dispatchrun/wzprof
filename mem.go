@@ -102,4 +102,8 @@ func (p *ProfilerMemory) Sampler() Sampler {
 	return newAlwaysSampler()
 }
 
+func (p *ProfilerMemory) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
+	// no post process for this profiler
+}
+
 var _ Profiler = &ProfilerMemory{}

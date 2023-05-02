@@ -50,6 +50,8 @@ type Profiler interface {
 	// function 'name' definied in it. Return the name of a function as
 	// defined in Register, or empty string to not listen.
 	Listen(name string) string
+
+	PostProcess(prof *profile.Profile, idx int, locations []*profile.Location)
 }
 
 // ProfilerListener is a FunctionListenerFactory injecting a set of Profilers
@@ -221,7 +223,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	counters := make(map[uint64]entry)
 	bx := make([]byte, 8)
 
-	var offLocations []offCPULocations
+	var off []*profile.Location
 
 	p.samplesMu.Lock()
 	for e := p.samples.Front(); e != nil; e = e.Next() {
@@ -240,10 +242,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 		}
 
 		if s.isIO {
-			offLocations = append(offLocations, offCPULocations{
-				location: locations[0],
-				val:      s.values[0],
-			})
+			off = append(off, locations[0])
 		}
 
 		sum64 := h.Sum64()
@@ -264,64 +263,18 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	p.samplesMu.Unlock()
 
 	for _, count := range counters {
-		prof.Sample = append(prof.Sample, &profile.Sample{
+		sample := &profile.Sample{
 			Value:    count.counts,
 			Location: count.locations,
-		})
-	}
+		}
+		prof.Sample = append(prof.Sample, sample)
 
-	findAllOffCPU(prof, offLocations)
+		for i, p := range p.profilers {
+			p.PostProcess(prof, i, off)
+		}
+	}
 
 	return prof
-}
-
-func findAllOffCPU(prof *profile.Profile, offLocations []offCPULocations) {
-	// TODO: rebase on main and review the profiler tree to understand where we need
-	// to substrac the off cpu time.
-	println("total samples", len(prof.Sample))
-	println("total off cpu locations", len(offLocations))
-	containLoc := func(locations []*profile.Location, loc *profile.Location) (*profile.Location, bool) {
-		for _, l := range locations {
-			if l == loc {
-				return l, true
-			}
-		}
-		return nil, false
-	}
-
-	finalLocations := []offCPULocations{}
-
-	for _, loc := range offLocations {
-		for _, sample := range prof.Sample {
-			if _, ok := containLoc(sample.Location, loc.location); ok {
-				//sample.Value[0] -= loc.val
-				//for _, line := range l.Line {
-				//	println("->", line.Function.Name)
-				//}
-				for _, location := range sample.Location {
-					finalLocations = append(finalLocations, offCPULocations{
-						location: location,
-						val:      loc.val,
-					})
-					//for _, line := range location.Line {
-					//	println("::", line.Function.Name)
-					//}
-				}
-			}
-		}
-	}
-	println("final locations", len(finalLocations))
-	i := 0
-	for _, loc := range finalLocations {
-		for _, sample := range prof.Sample {
-			if sample.Location[0] == loc.location {
-				i++
-				sample.Value[0] -= loc.val
-			}
-
-		}
-	}
-	println("updated locations", i)
 }
 
 // Write writes the collected samples to the given writer.

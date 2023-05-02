@@ -58,7 +58,7 @@ func (prog program) Execute(ctx context.Context) error {
 			})
 		case "cputime":
 			pfs = append(pfs, &wzprof.ProfilerCPUTime{
-				Sampling: float32(*sampling),
+				Sampling: float32(prog.Sampling),
 			})
 		}
 	}
@@ -80,7 +80,7 @@ func (prog program) Execute(ctx context.Context) error {
 		WithSysNanotime().
 		WithSysWalltime().
 		WithArgs(wasmName).
-		WithFSConfig(createFSConfig(*mounts))
+		WithFSConfig(createFSConfig(prog.Mounts))
 
 	go func() {
 		defer cancel()

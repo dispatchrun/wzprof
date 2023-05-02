@@ -41,4 +41,8 @@ func (p *ProfilerCPU) Sampler() Sampler {
 	return newRandomSampler(time.Now().UnixNano(), p.Sampling)
 }
 
+func (p *ProfilerCPU) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
+	// no post process for this profiler
+}
+
 var _ Profiler = &ProfilerCPU{}

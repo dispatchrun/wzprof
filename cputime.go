@@ -15,7 +15,7 @@ type ProfilerCPUTime struct {
 
 type cputime struct{}
 
-func (p cputime) Before(params []uint64, globals []api.Global, mem api.Memory) int64 {
+func (p cputime) Before(mod api.Module, params []uint64) int64 {
 	return time.Now().UnixNano()
 }
 
@@ -41,4 +41,32 @@ func (p *ProfilerCPUTime) Sampler() Sampler {
 	return newRandomSampler(time.Now().UnixNano(), p.Sampling)
 }
 
-var _ Profiler = &ProfilerCPU{}
+func (p *ProfilerCPUTime) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
+	for _, sample := range prof.Sample {
+		for _, off := range offLocations {
+			processSample(prof, sample, off)
+		}
+	}
+}
+
+func processSample(prof *profile.Profile, s *profile.Sample, off *profile.Location) {
+	match := false
+	for _, loc := range s.Location {
+		if loc == off {
+			match = true
+			break
+		}
+	}
+
+	if match {
+		for _, loc := range s.Location {
+			for _, sample := range prof.Sample {
+				if loc == sample.Location[0] {
+					sample.Value[0] = 0
+				}
+			}
+		}
+	}
+}
+
+var _ Profiler = &ProfilerCPUTime{}
