@@ -7,7 +7,9 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
-// ProfilerCPU instruments function calls for cpu_samples.
+// ProfileProcessor records the active CPU time of the WASM guest.
+// This profiler doesn't take into account the time "off-cpu" (e.g. waiting for I/O).
+// Here, all host-functions are considered "off-cpu" from a guest perspective.
 type ProfilerCPUTime struct {
 	// Sampling rate between 0.0 and 1.0.
 	Sampling float32
@@ -41,6 +43,7 @@ func (p *ProfilerCPUTime) Sampler() Sampler {
 	return newRandomSampler(time.Now().UnixNano(), p.Sampling)
 }
 
+// PostProcess removes all samples that are "off-cpu" aka all time spent executing host-functions.
 func (p *ProfilerCPUTime) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
 	for _, sample := range prof.Sample {
 		for _, off := range offLocations {

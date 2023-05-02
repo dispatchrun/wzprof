@@ -7,9 +7,13 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
-// ProfilerCPU instruments function calls for cpu_samples.
+// ProfilerCPU is a sampled based CPU profiler. This profiler is counting
+// the stacks for each functions. The sampling rate is between 0.0 and 1.0.
+//
+// CPU samples profiles provide a good overview of the CPU usage of a program.
+// while keeping the overhead low.
 type ProfilerCPU struct {
-	// Sampling rate between 0.0 and 0.2.
+	// Sampling rate between 0.0 and 1.0
 	Sampling float32
 }
 
