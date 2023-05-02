@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
-	"os"
 	"sort"
 
 	"github.com/tetratelabs/wazero/api"
@@ -173,7 +173,7 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 
 	ranges, err := d.d.Ranges(e)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "profiler: dwarf: failed to read ranges: %s\n", err)
+		log.Printf("profiler: dwarf: failed to read ranges: %s\n", err)
 		return
 	}
 
@@ -227,7 +227,7 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 
 	lr, err := d.d.LineReader(spgm.CU)
 	if err != nil || lr == nil {
-		fmt.Fprintf(os.Stderr, "profiler: dwarf: failed to read lines: %s\n", err)
+		log.Printf("profiler: dwarf: failed to read lines: %s\n", err)
 		return nil
 	}
 
@@ -241,7 +241,7 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 			break
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "profiler: dwarf: failed to iterate on lines: %s\n", err)
+			log.Printf("profiler: dwarf: failed to iterate on lines: %s\n", err)
 			break
 		}
 		lines = append(lines, line{Pos: pos, Address: le.Address})

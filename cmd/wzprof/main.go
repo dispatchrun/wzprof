@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/google/pprof/profile"
+	flag "github.com/spf13/pflag"
 	"github.com/stealthrocket/wzprof"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -25,7 +26,7 @@ func main() {
 	}
 }
 
-const defaultCPUSampling = 0.2
+const defaultCPUSampling = 1
 
 type program struct {
 	WasmPath  string
@@ -33,6 +34,7 @@ type program struct {
 	HttpAddr  string
 	Sampling  float64
 	Profilers string
+	Mounts    []string
 }
 
 func (prog program) Execute(ctx context.Context) error {
@@ -49,12 +51,12 @@ func (prog program) Execute(ctx context.Context) error {
 	pfnames := strings.Split(prog.Profilers, ",")
 	for _, name := range pfnames {
 		switch name {
-		case "cpu":
-			pfs = append(pfs, &wzprof.ProfilerCPU{
-				Sampling: float32(prog.Sampling),
-			})
 		case "mem":
-			pfs = append(pfs, &wzprof.ProfilerMemory{})
+			pfs = append(pfs, wzprof.NewProfilerMemory())
+		case "cpu":
+			pfs = append(pfs, wzprof.NewProfilerCPU(float32(prog.Sampling)))
+		case "cputime":
+			pfs = append(pfs, wzprof.NewProfilerCPUTime(float32(prog.Sampling)))
 		}
 	}
 
@@ -74,7 +76,8 @@ func (prog program) Execute(ctx context.Context) error {
 		WithSysNanosleep().
 		WithSysNanotime().
 		WithSysWalltime().
-		WithArgs(wasmName)
+		WithArgs(wasmName).
+		WithFSConfig(createFSConfig(prog.Mounts))
 
 	go func() {
 		defer cancel()
@@ -117,7 +120,6 @@ func (prog program) Execute(ctx context.Context) error {
 		if err := writeFile(prog.File, pl.BuildProfile()); err != nil {
 			return err
 		}
-		fmt.Println("profile written to", prog.File)
 	}
 
 	return nil
@@ -128,13 +130,20 @@ func run() error {
 	defer cancel()
 
 	var (
-		file      = flag.String("file", "", "Filename to write profile to")
-		httpAddr  = flag.String("http", "", "HTTP server address")
+		file      = flag.String("pprof-file", "", "Filename to write profile to")
+		httpAddr  = flag.String("pprof-addr", "", "HTTP server address")
 		sampling  = flag.Float64("sampling", defaultCPUSampling, "CPU sampling rate")
-		profilers = flag.String("profilers", "cpu,mem", "Comma-separated list of profilers to use")
+		profilers = flag.String("profilers", "cputime,cpu,mem", "Comma-separated list of profilers to use")
+		mounts    = flag.StringSlice("mount", []string{}, "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro)")
+		verbose   = flag.Bool("verbose", false, "Verbose logging")
 	)
 
 	flag.Parse()
+
+	log.Default().SetOutput(io.Discard)
+	if *verbose {
+		log.Default().SetOutput(os.Stderr)
+	}
 
 	args := flag.Args()
 	if len(args) != 1 {
@@ -148,10 +157,12 @@ func run() error {
 		HttpAddr:  *httpAddr,
 		Sampling:  *sampling,
 		Profilers: *profilers,
+		Mounts:    *mounts,
 	}.Execute(ctx)
 }
 
 func writeFile(fname string, p *profile.Profile) error {
+	log.Printf("writing profile to %s", fname)
 	f, err := os.Create(fname)
 	if err != nil {
 		return err
@@ -159,4 +170,27 @@ func writeFile(fname string, p *profile.Profile) error {
 	defer f.Close()
 
 	return p.Write(f)
+}
+
+func createFSConfig(mounts []string) wazero.FSConfig {
+	fs := wazero.NewFSConfig()
+	for _, m := range mounts {
+		parts := strings.Split(m, ":")
+		if len(parts) < 2 {
+			log.Fatalf("invalid mount: %s", m)
+		}
+
+		var mode string
+		if len(parts) == 3 {
+			mode = parts[2]
+		}
+
+		if mode == "ro" {
+			fs = fs.WithReadOnlyDirMount(parts[0], parts[1])
+			continue
+		}
+
+		fs = fs.WithDirMount(parts[0], parts[1])
+	}
+	return fs
 }

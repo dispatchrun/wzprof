@@ -13,22 +13,45 @@ import (
 // allocations (alloc_space).
 type ProfilerMemory struct{}
 
-func profileStack0int32(mod api.Module, params []uint64) int64 {
-	return int64(int32(params[0]))
+func NewProfilerMemory() *ProfilerMemory {
+	return &ProfilerMemory{}
 }
 
-func profileStackCalloc(mod api.Module, params []uint64) int64 {
+type profileStack0int32 struct{}
+
+func (p profileStack0int32) Before(mod api.Module, params []uint64) int64 {
+	return int64(int32(params[0]))
+}
+func (p profileStack0int32) After(in int64, results []uint64) int64 {
+	return in
+}
+
+type profileStackCalloc struct{}
+
+func (p profileStackCalloc) Before(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[0])) * int64(int32(params[1]))
 }
 
-func profileStack1int32(mod api.Module, params []uint64) int64 {
+func (profileStackCalloc) After(in int64, results []uint64) int64 {
+	return in
+}
+
+type profileStack1int32 struct{}
+
+func (p profileStack1int32) Before(mod api.Module, params []uint64) int64 {
 	return int64(int32(params[1]))
 }
 
-func profileGoStack0int32(mod api.Module, params []uint64) int64 {
+func (p profileStack1int32) After(in int64, results []uint64) int64 {
+	return in
+}
+
+type profileGoStack0int32 struct{}
+
+func (p profileGoStack0int32) Before(mod api.Module, params []uint64) int64 {
 	imod := mod.(experimental.InternalModule)
 	mem := imod.Memory()
-	// TODO: this assumes all values on the stack are 64bits. this is probably wrong.
+
 	sp := int32(imod.Global(0).Get())
 	offset := sp + 8*(int32(0)+1) // +1 for the return address
 	b, ok := mem.Read(uint32(offset), 8)
@@ -39,12 +62,16 @@ func profileGoStack0int32(mod api.Module, params []uint64) int64 {
 	return int64(v)
 }
 
-func (p *ProfilerMemory) Register() map[string]ProfileFunction {
-	return map[string]ProfileFunction{
-		"profileStack0int32":   profileStack0int32,
-		"profileStack1int32":   profileStack1int32,
-		"profileStackCalloc":   profileStackCalloc,
-		"profileGoStack0int32": profileGoStack0int32,
+func (p profileGoStack0int32) After(in int64, results []uint64) int64 {
+	return in
+}
+
+func (p *ProfilerMemory) Register() map[string]ProfileProcessor {
+	return map[string]ProfileProcessor{
+		"profileStack0int32":   profileStack0int32{},
+		"profileStack1int32":   profileStack1int32{},
+		"profileStackCalloc":   profileStackCalloc{},
+		"profileGoStack0int32": profileGoStack0int32{},
 	}
 }
 
@@ -77,6 +104,10 @@ func (p *ProfilerMemory) SampleType() profile.ValueType {
 
 func (p *ProfilerMemory) Sampler() Sampler {
 	return newAlwaysSampler()
+}
+
+func (p *ProfilerMemory) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
+	// no post process for this profiler
 }
 
 var _ Profiler = &ProfilerMemory{}
