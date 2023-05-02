@@ -52,15 +52,11 @@ func (prog program) Execute(ctx context.Context) error {
 	for _, name := range pfnames {
 		switch name {
 		case "mem":
-			pfs = append(pfs, &wzprof.ProfilerMemory{})
+			pfs = append(pfs, wzprof.NewProfilerMemory())
 		case "cpu":
-			pfs = append(pfs, &wzprof.ProfilerCPU{
-				Sampling: float32(prog.Sampling),
-			})
+			pfs = append(pfs, wzprof.NewProfilerCPU(float32(prog.Sampling)))
 		case "cputime":
-			pfs = append(pfs, &wzprof.ProfilerCPUTime{
-				Sampling: float32(prog.Sampling),
-			})
+			pfs = append(pfs, wzprof.NewProfilerCPUTime(float32(prog.Sampling)))
 		}
 	}
 

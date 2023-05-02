@@ -17,6 +17,10 @@ type ProfilerCPU struct {
 	Sampling float32
 }
 
+func NewProfilerCPU(sampling float32) *ProfilerCPU {
+	return &ProfilerCPU{Sampling: sampling}
+}
+
 type cpuprocessor struct{}
 
 func (p cpuprocessor) Before(mod api.Module, params []uint64) int64 {

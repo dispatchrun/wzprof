@@ -15,6 +15,10 @@ type ProfilerCPUTime struct {
 	Sampling float32
 }
 
+func NewProfilerCPUTime(sampling float32) *ProfilerCPUTime {
+	return &ProfilerCPUTime{Sampling: sampling}
+}
+
 type cputime struct{}
 
 func (p cputime) Before(mod api.Module, params []uint64) int64 {

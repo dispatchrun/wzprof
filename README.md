@@ -19,7 +19,7 @@ Developers can use the classic `go tool pprof` or any `pprof` compatible tool to
 
 ## Features
 
-- CPU: calls sampling.
+- CPU: calls sampling and on-CPU time.
 - Memory: allocations (see below).
 - DWARF support (demangling, source-level profiling)
 - Integrated pprof server.
@@ -29,14 +29,30 @@ Developers can use the classic `go tool pprof` or any `pprof` compatible tool to
 
 You can either use `wzprof` as a CLI or as a library if you use the Wazero runtime libraries.
 
-You can get the latest version of the profiler library via:
+You can install the latest version of `wzprof` via:
+```
+go install github.com/stealthrocket/wzprof/cmd/wzprof@latest
+```
+
+To use the library:
 ```
 go get github.com/stealthrocket/wzprof@latest
 ```
 
-Or if you want to use the CLI:
+The profiler is propagated to the Wazero runtime through its context:
+
 ```
-go install github.com/stealthrocket/wzprof/cmd/wzprof@latest
+ctx := context.Background()
+
+profiler := wzprof.NewProfileListener(
+    wzprof.NewProfilerMemory(),
+    wzprof.NewProfilerCPU(0.2),
+    wzprof.NewProfilerCPUTime(0.2),
+)
+
+ctx = profiler.Register(ctx)
+
+runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
 ```
 
 ### Examples
@@ -45,7 +61,7 @@ go install github.com/stealthrocket/wzprof/cmd/wzprof@latest
 #### Connect to running pprof server
 
 ```
-wzprof -http=:8080 path/to/guest.wasm
+wzprof -pprof-addr=:8080 path/to/guest.wasm
 ```
 
 ```
@@ -55,7 +71,7 @@ go tool pprof -http=:3030 http://localhost:8080
 #### Run program to completion with profiling
 
 ```
-wzprof -file=profile.pb.gz path/to/guest.wasm
+wzprof -pprof-file=profile.pb.gz path/to/guest.wasm
 ```
 
 ## Profilers
@@ -71,3 +87,14 @@ Memory profiling works by tracing specific functions. Supported functions are:
 - `runtime.alloc`
 
 Feel free to open a pull request to support more memory-allocating functions!
+
+### CPU
+
+`wzprof` has two CPU profilers: CPU samples and CPU time.
+
+The CPU samples profiler gives a repesentation of the guest execution by counting
+the number of time it seen an unique stack trace.
+
+The CPU time profiler measures the actual time spent on-CPU without taking into 
+account the off-CPU time (e.g waiting for I/O). For this profiler, all the host-functions
+are considered off-CPU.
