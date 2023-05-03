@@ -62,31 +62,31 @@ func (p *ProfilerCPUTime) Sampler() Sampler {
 
 // PostProcess removes all samples that are "off-cpu" aka all time spent executing host-functions.
 func (p *ProfilerCPUTime) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
-	for _, sample := range prof.Sample {
-		for _, off := range offLocations {
-			p.processSample(prof, sample, off)
-		}
-	}
-}
-
-func (p *ProfilerCPUTime) processSample(prof *profile.Profile, s *profile.Sample, off *profile.Location) {
 	if p.IncludeIO {
 		return
 	}
 
-	match := false
-	for _, loc := range s.Location {
-		if loc == off {
-			match = true
-			break
-		}
+	for _, off := range offLocations {
+		p.processSamples(prof, off)
 	}
+}
 
-	if match {
+func (p *ProfilerCPUTime) processSamples(prof *profile.Profile, off *profile.Location) {
+	var match bool
+	for _, s := range prof.Sample {
 		for _, loc := range s.Location {
-			for _, sample := range prof.Sample {
-				if loc == sample.Location[0] {
-					sample.Value[0] = 0
+			match = false
+			if loc == off {
+				match = true
+				break
+			}
+		}
+		if match {
+			for _, loc := range s.Location {
+				for _, sample := range prof.Sample {
+					if loc == sample.Location[0] {
+						sample.Value[0] = 0
+					}
 				}
 			}
 		}

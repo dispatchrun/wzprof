@@ -65,7 +65,7 @@ wzprof --pprof-addr=:8080 path/to/guest.wasm
 ```
 
 ```
-go tool pprof -http=:3030 http://localhost:8080
+go tool pprof -http=:3030 http://localhost:8080/guest/debug/pprof
 ```
 
 #### Run program to completion with profiling
