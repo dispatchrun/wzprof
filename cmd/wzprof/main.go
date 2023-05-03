@@ -79,6 +79,7 @@ func (prog program) Execute(ctx context.Context) error {
 		WithArgs(wasmName).
 		WithFSConfig(createFSConfig(prog.Mounts))
 
+	errC := make(chan error)
 	go func() {
 		defer cancel()
 		compiled, err := runtime.CompileModule(ctx, wasmCode)
@@ -90,18 +91,19 @@ func (prog program) Execute(ctx context.Context) error {
 
 		defer func() {
 			if err := compiled.Close(ctx); err != nil {
-				fmt.Println(err)
+				log.Printf("error closing module: %v", err)
 			}
 		}()
 
 		instance, err := runtime.InstantiateModule(ctx, compiled, config)
 		if err != nil {
-			fmt.Println(err)
+			// If any error occurs during the module execution, we don't write the profile.
+			errC <- err
 			return
 		}
 
 		if err := instance.Close(ctx); err != nil {
-			fmt.Println(err)
+			log.Printf("error closing instance: %v", err)
 		}
 	}()
 
@@ -113,10 +115,15 @@ func (prog program) Execute(ctx context.Context) error {
 		}()
 	}
 
-	<-ctx.Done()
-	cancel()
+	var modErr error
+	select {
+	case err := <-errC:
+		modErr = err
+	case <-ctx.Done():
+		cancel()
+	}
 
-	if prog.File != "" {
+	if prog.File != "" && modErr == nil {
 		if err := writeFile(prog.File, pl.BuildProfile()); err != nil {
 			return err
 		}
