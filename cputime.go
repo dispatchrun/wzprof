@@ -66,27 +66,27 @@ func (p *ProfilerCPUTime) PostProcess(prof *profile.Profile, idx int, offLocatio
 		return
 	}
 
-	for _, sample := range prof.Sample {
-		for _, off := range offLocations {
-			p.processSample(prof, sample, off)
-		}
+	for _, off := range offLocations {
+		p.processSamples(prof, off)
 	}
 }
 
-func (p *ProfilerCPUTime) processSample(prof *profile.Profile, s *profile.Sample, off *profile.Location) {
-	match := false
-	for _, loc := range s.Location {
-		if loc == off {
-			match = true
-			break
-		}
-	}
-
-	if match {
+func (p *ProfilerCPUTime) processSamples(prof *profile.Profile, off *profile.Location) {
+	var match bool
+	for _, s := range prof.Sample {
 		for _, loc := range s.Location {
-			for _, sample := range prof.Sample {
-				if loc == sample.Location[0] {
-					sample.Value[0] = 0
+			match = false
+			if loc == off {
+				match = true
+				break
+			}
+		}
+		if match {
+			for _, loc := range s.Location {
+				for _, sample := range prof.Sample {
+					if loc == sample.Location[0] {
+						sample.Value[0] = 0
+					}
 				}
 			}
 		}
