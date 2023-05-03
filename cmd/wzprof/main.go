@@ -21,6 +21,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -123,8 +124,10 @@ func (prog program) Execute(ctx context.Context) error {
 	}()
 
 	if prog.HttpAddr != "" {
+		http.DefaultServeMux.Handle("/debug/guest", pl)
+
 		go func() {
-			if err := http.ListenAndServe(prog.HttpAddr, pl); err != nil {
+			if err := http.ListenAndServe(prog.HttpAddr, nil); err != nil {
 				log.Println(err)
 			}
 		}()
