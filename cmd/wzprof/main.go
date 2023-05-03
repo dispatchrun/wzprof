@@ -43,12 +43,13 @@ func main() {
 const defaultCPUSampling = 0.2
 
 type program struct {
-	WasmPath  string
-	File      string
-	HttpAddr  string
-	Sampling  float64
-	Profilers string
-	Mounts    []string
+	WasmPath    string
+	File        string
+	HttpAddr    string
+	CPUSampling float64
+	CPUWithIO   bool
+	Profilers   string
+	Mounts      []string
 }
 
 func (prog program) Execute(ctx context.Context) error {
@@ -68,9 +69,9 @@ func (prog program) Execute(ctx context.Context) error {
 		case "mem":
 			pfs = append(pfs, wzprof.NewProfilerMemory())
 		case "cpu":
-			pfs = append(pfs, wzprof.NewProfilerCPU(float32(prog.Sampling)))
+			pfs = append(pfs, wzprof.NewProfilerCPU(float32(prog.CPUSampling)))
 		case "cputime":
-			pfs = append(pfs, wzprof.NewProfilerCPUTime(float32(prog.Sampling)))
+			pfs = append(pfs, wzprof.NewProfilerCPUTime(float32(prog.CPUSampling), prog.CPUWithIO))
 		}
 	}
 
@@ -151,12 +152,13 @@ func run() error {
 	defer cancel()
 
 	var (
-		file      = flag.String("pprof-file", "", "Filename to write profile to")
-		httpAddr  = flag.String("pprof-addr", "", "HTTP server address")
-		sampling  = flag.Float64("sampling", defaultCPUSampling, "CPU sampling rate")
-		profilers = flag.String("profilers", "cputime,cpu,mem", "Comma-separated list of profilers to use")
-		mounts    = flag.StringSlice("mount", []string{}, "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro)")
-		verbose   = flag.Bool("verbose", false, "Verbose logging")
+		file        = flag.String("pprof-file", "", "Filename to write profile to")
+		httpAddr    = flag.String("pprof-addr", "", "HTTP server address")
+		cpuSampling = flag.Float64("cpu-sampling", defaultCPUSampling, "CPU sampling rate")
+		cpuWithIO   = flag.Bool("cpu-with-io", false, "Include I/O in CPU time profiling")
+		profilers   = flag.String("profilers", "cputime,cpu,mem", "Comma-separated list of profilers to use")
+		mounts      = flag.StringSlice("mount", []string{}, "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro)")
+		verbose     = flag.Bool("verbose", false, "Verbose logging")
 	)
 
 	flag.Parse()
@@ -173,12 +175,13 @@ func run() error {
 	wasmPath := args[0]
 
 	return program{
-		WasmPath:  wasmPath,
-		File:      *file,
-		HttpAddr:  *httpAddr,
-		Sampling:  *sampling,
-		Profilers: *profilers,
-		Mounts:    *mounts,
+		WasmPath:    wasmPath,
+		File:        *file,
+		HttpAddr:    *httpAddr,
+		CPUSampling: *cpuSampling,
+		CPUWithIO:   *cpuWithIO,
+		Profilers:   *profilers,
+		Mounts:      *mounts,
 	}.Execute(ctx)
 }
 
