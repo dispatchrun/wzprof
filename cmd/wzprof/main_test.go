@@ -52,9 +52,9 @@ func TestDataCSimple(t *testing.T) {
 	}
 
 	prog := program{
-		WasmPath:  "../../internal/testdata/c/simple.wasm",
-		Sampling:  1.0,
-		Profilers: "cpu,mem",
+		WasmPath:    "../../internal/testdata/c/simple.wasm",
+		CPUSampling: 1.0,
+		Profilers:   "cpu,mem",
 	}
 
 	testFullProfile(t, expectedSamples, prog)
@@ -97,9 +97,9 @@ func TestDataRustSimple(t *testing.T) {
 	}
 
 	prog := program{
-		WasmPath:  "../../internal/testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm",
-		Sampling:  1.0,
-		Profilers: "cpu,mem",
+		WasmPath:    "../../internal/testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm",
+		CPUSampling: 1.0,
+		Profilers:   "cpu,mem",
 	}
 
 	testFullProfile(t, expectedSamples, prog)
