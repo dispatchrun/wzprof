@@ -29,14 +29,7 @@ type ProfilerCPUTime struct {
 	Sampling float32
 
 	// If true, the profiler will account for time spent in host-functions.
-	WithIO bool
-}
-
-func NewProfilerCPUTime(sampling float32, withIO bool) *ProfilerCPUTime {
-	return &ProfilerCPUTime{
-		Sampling: sampling,
-		WithIO:   withIO,
-	}
+	IncludeIO bool
 }
 
 type cputime struct{}
@@ -77,7 +70,7 @@ func (p *ProfilerCPUTime) PostProcess(prof *profile.Profile, idx int, offLocatio
 }
 
 func (p *ProfilerCPUTime) processSample(prof *profile.Profile, s *profile.Sample, off *profile.Location) {
-	if p.WithIO {
+	if p.IncludeIO {
 		return
 	}
 
