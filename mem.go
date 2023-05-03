@@ -27,10 +27,6 @@ import (
 // allocations (alloc_space).
 type ProfilerMemory struct{}
 
-func NewProfilerMemory() *ProfilerMemory {
-	return &ProfilerMemory{}
-}
-
 type profileStack0int32 struct{}
 
 func (p profileStack0int32) Before(mod api.Module, params []uint64) int64 {

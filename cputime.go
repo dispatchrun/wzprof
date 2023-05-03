@@ -27,10 +27,9 @@ import (
 type ProfilerCPUTime struct {
 	// Sampling rate between 0.0 and 1.0.
 	Sampling float32
-}
 
-func NewProfilerCPUTime(sampling float32) *ProfilerCPUTime {
-	return &ProfilerCPUTime{Sampling: sampling}
+	// If true, the profiler will account for time spent in host-functions.
+	IncludeIO bool
 }
 
 type cputime struct{}
@@ -65,12 +64,16 @@ func (p *ProfilerCPUTime) Sampler() Sampler {
 func (p *ProfilerCPUTime) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
 	for _, sample := range prof.Sample {
 		for _, off := range offLocations {
-			processSample(prof, sample, off)
+			p.processSample(prof, sample, off)
 		}
 	}
 }
 
-func processSample(prof *profile.Profile, s *profile.Sample, off *profile.Location) {
+func (p *ProfilerCPUTime) processSample(prof *profile.Profile, s *profile.Sample, off *profile.Location) {
+	if p.IncludeIO {
+		return
+	}
+
 	match := false
 	for _, loc := range s.Location {
 		if loc == off {
