@@ -4,18 +4,20 @@
 
 # wzprof
 
-`wzprof`, pronounce "wa-zi-prof", is as pprof based profiler for WebAssembly built on top of Wazero.
-It gives you easy access to CPU and Memory profiles of your WASM modules.
+`wzprof`, pronounced as you think it should, is as pprof based profiler for
+WebAssembly built on top of Wazero. It gives you easy access to CPU and Memory
+profiles of your WASM modules.
 
 ## Motivation
 
-`pprof` is one of the favorite profiling tool of any Go developer. Many WASM runtimes out there allow 
-to profile guest code via an external profiler, such as `perf`, but in many cases, you don't want to run 
-an external profiler and you just want a quick and easy access to your WASM module profiles.
+`pprof` is one of the favorite profiling tool of any Go developer. Many WASM
+runtimes out there allow to profile guest code via an external profiler, such as
+`perf`, but in many cases, you don't want to run an external profiler and you
+just want a quick and easy access to your WASM module profiles.
 
-`wzprof` currently implements two profilers, CPU and Memory, and works with any language compiled to WASM.
-Developers can use the classic `go tool pprof` or any `pprof` compatible tool to consume their profiles.
-
+`wzprof` currently implements two profilers, CPU and Memory, and works with any
+language compiled to WASM. Developers can use the classic `go tool pprof` or any
+`pprof` compatible tool to consume their profiles.
 
 ## Features
 
@@ -27,7 +29,8 @@ Developers can use the classic `go tool pprof` or any `pprof` compatible tool to
 
 ## Usage
 
-You can either use `wzprof` as a CLI or as a library if you use the Wazero runtime libraries.
+You can either use `wzprof` as a CLI or as a library if you use the Wazero
+runtime libraries.
 
 You can install the latest version of `wzprof` via:
 ```
@@ -95,6 +98,6 @@ Feel free to open a pull request to support more memory-allocating functions!
 The CPU samples profiler gives a repesentation of the guest execution by counting
 the number of time it seen an unique stack trace.
 
-The CPU time profiler measures the actual time spent on-CPU without taking into 
-account the off-CPU time (e.g waiting for I/O). For this profiler, all the host-functions
-are considered off-CPU.
+The CPU time profiler measures the actual time spent on-CPU without taking into
+account the off-CPU time (e.g waiting for I/O). For this profiler, all the
+host-functions are considered off-CPU.
