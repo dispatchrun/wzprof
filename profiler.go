@@ -171,6 +171,7 @@ type sample struct {
 	stack  []stackEntry
 	values []int64
 	isIO   bool
+	isSet  bool
 }
 
 func (p *ProfilerListener) report(si experimental.StackIterator, values []int64) {
@@ -469,9 +470,10 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 		if fnd.GoFunction() != nil {
 			s.isIO = true
 		}
-		h.samples = append(h.samples, s)
+		s.isSet = true
 		//ctx = context.WithValue(ctx, "sample", s)
 	}
+	h.samples = append(h.samples, s)
 	return ctx
 }
 
@@ -483,16 +485,18 @@ func (h *hook) After(ctx context.Context, mod api.Module, fnd api.FunctionDefini
 	// }
 	//sample := v.(sample)
 	sample := h.samples[len(h.samples)-1]
-	deltas := make([]int64, len(sample.values))
-	for i, processor := range h.processors {
-		if processor == nil {
-			// FIXME: processor should never be nil here.
-			continue
-		}
-		deltas[i] = processor.After(sample.values[i], results)
+	if sample.isSet {
+		deltas := make([]int64, len(sample.values))
+		for i, processor := range h.processors {
+			if processor == nil {
+				// FIXME: processor should never be nil here.
+				continue
+			}
+			deltas[i] = processor.After(sample.values[i], results)
 
+		}
+		sample.values = deltas
+		h.profiler.reportSample(sample)
 	}
-	sample.values = deltas
-	h.profiler.reportSample(sample)
 	h.samples = h.samples[:len(h.samples)-1]
 }
