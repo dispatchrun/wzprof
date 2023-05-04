@@ -471,7 +471,6 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 			s.isIO = true
 		}
 		s.isSet = true
-		//ctx = context.WithValue(ctx, "sample", s)
 	}
 	h.samples = append(h.samples, s)
 	return ctx
@@ -479,11 +478,6 @@ func (h *hook) Before(ctx context.Context, mod api.Module, fnd api.FunctionDefin
 
 // After implements experimental.FunctionListener.
 func (h *hook) After(ctx context.Context, mod api.Module, fnd api.FunctionDefinition, err error, results []uint64) {
-	// v := ctx.Value("sample")
-	// if v == nil {
-	// 	return
-	// }
-	//sample := v.(sample)
 	sample := h.samples[len(h.samples)-1]
 	if sample.isSet {
 		deltas := make([]int64, len(sample.values))
@@ -493,7 +487,6 @@ func (h *hook) After(ctx context.Context, mod api.Module, fnd api.FunctionDefini
 				continue
 			}
 			deltas[i] = processor.After(sample.values[i], results)
-
 		}
 		sample.values = deltas
 		h.profiler.reportSample(sample)
