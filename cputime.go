@@ -32,14 +32,17 @@ type ProfilerCPUTime struct {
 	IncludeIO bool
 }
 
+// https://pkg.go.dev/time#hdr-Monotonic_Clocks
+var epoch = time.Now()
+
 type cputime struct{}
 
 func (p cputime) Before(mod api.Module, params []uint64) int64 {
-	return time.Now().UnixNano()
+	return int64(time.Since(epoch))
 }
 
 func (p cputime) After(in int64, results []uint64) int64 {
-	return time.Now().UnixNano() - in
+	return int64(time.Since(epoch)) - in
 }
 
 func (p *ProfilerCPUTime) Register() map[string]ProfileProcessor {
