@@ -32,6 +32,7 @@ type ProfilerCPUTime struct {
 	IncludeIO bool
 }
 
+// https://pkg.go.dev/time#hdr-Monotonic_Clocks
 var epoch = time.Now()
 
 type cputime struct{}
