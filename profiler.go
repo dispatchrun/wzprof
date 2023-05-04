@@ -181,7 +181,7 @@ func (p *ProfilerListener) report(si experimental.StackIterator, values []int64)
 	copy(sample.values, values)
 	for si.Next() {
 		fn := si.FunctionDefinition()
-		pc := si.SourceOffset()
+		pc := uint64(0) // si.SourceOffset()
 		sample.stack = append(sample.stack, stackEntry{fn: fn, pc: pc})
 	}
 	p.samplesMu.Lock()
@@ -441,7 +441,7 @@ func (p *ProfilerListener) createSample(si experimental.StackIterator, values []
 	}
 	for si.Next() {
 		fn := si.FunctionDefinition()
-		pc := si.SourceOffset()
+		pc := uint64(0) // si.SourceOffset()
 		sample.stack = append(sample.stack, stackEntry{fn: fn, pc: pc})
 	}
 	return sample
