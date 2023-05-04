@@ -153,10 +153,9 @@ func (d *dwarfparser) parseAny(cu *dwarf.Entry, ns string, e *dwarf.Entry) {
 func (d *dwarfparser) parseNamespace(cu *dwarf.Entry, ns string, e *dwarf.Entry) {
 	// Assumption is that r has just read the top level entry of this
 	// namespace, which is e.
-
 	name, ok := e.Val(dwarf.AttrName).(string)
 	if ok {
-		ns += name + ":" // TODO: string builder.
+		ns += name + ":"
 	}
 	d.parseCompileUnit(cu, ns)
 }
