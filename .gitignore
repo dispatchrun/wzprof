@@ -17,4 +17,4 @@
 # Emacs
 *~
 
-internal/testdata/rust/*/target/*
+testdata/rust/*/target/*
