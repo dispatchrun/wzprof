@@ -389,20 +389,16 @@ func (p *ProfilerListener) locationForCall(prof *profile.Profile, f stackEntry) 
 
 // NewListener implements Wazero's experimental.FunctionListenerFactory.
 func (p *ProfilerListener) NewListener(def api.FunctionDefinition) experimental.FunctionListener {
-	funcNames := make([]string, len(p.profilers))
-
-	some := false
-	for i, profiler := range p.profilers {
-		funcNames[i] = profiler.Listen(def.Name())
-		some = true
-	}
-
-	if !some {
+	if len(p.profilers) == 0 {
 		return nil
 	}
 
-	hookKey := strings.Join(funcNames, "|")
+	funcNames := make([]string, len(p.profilers))
+	for i, profiler := range p.profilers {
+		funcNames[i] = profiler.Listen(def.Name())
+	}
 
+	hookKey := strings.Join(funcNames, "|")
 	if h, ok := p.hooks[hookKey]; ok {
 		return h
 	}
