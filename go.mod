@@ -9,4 +9,4 @@ require (
 
 require github.com/spf13/pflag v1.0.5
 
-replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230430142342-055e238d3c28
+replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230503192533-6860dd7061a1
