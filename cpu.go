@@ -51,8 +51,8 @@ func (p *ProfilerCPU) Listen(name string) string {
 	return "count1"
 }
 
-func (p *ProfilerCPU) SampleType() profile.ValueType {
-	return profile.ValueType{Type: "cpu_samples", Unit: "count"}
+func (p *ProfilerCPU) SampleType() *profile.ValueType {
+	return &profile.ValueType{Type: "cpu_samples", Unit: "count"}
 }
 
 func (p *ProfilerCPU) Sampler() Sampler {

@@ -55,8 +55,8 @@ func (p *ProfilerCPUTime) Listen(name string) string {
 	return "time"
 }
 
-func (p *ProfilerCPUTime) SampleType() profile.ValueType {
-	return profile.ValueType{Type: "cpu_time", Unit: "nanosecond"}
+func (p *ProfilerCPUTime) SampleType() *profile.ValueType {
+	return &profile.ValueType{Type: "cpu_time", Unit: "nanosecond"}
 }
 
 func (p *ProfilerCPUTime) Sampler() Sampler {

@@ -49,7 +49,7 @@ type ProfileProcessor interface {
 type Profiler interface {
 	// SampleType is called once initially to register the pprof type of
 	// samples collected by this profiler. Only one type permitted for now.
-	SampleType() profile.ValueType
+	SampleType() *profile.ValueType
 
 	// Sampler is called once initially to register which sampler to use for
 	// this profiler.
@@ -203,8 +203,7 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	}
 
 	for _, p := range p.profilers {
-		t := p.SampleType()
-		prof.SampleType = append(prof.SampleType, &t)
+		prof.SampleType = append(prof.SampleType, p.SampleType())
 	}
 
 	counters := make(map[uint64]*profile.Sample)

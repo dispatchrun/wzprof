@@ -108,8 +108,8 @@ func (p *ProfilerMemory) Listen(name string) string {
 	}
 }
 
-func (p *ProfilerMemory) SampleType() profile.ValueType {
-	return profile.ValueType{Type: "alloc_space", Unit: "bytes"}
+func (p *ProfilerMemory) SampleType() *profile.ValueType {
+	return &profile.ValueType{Type: "alloc_space", Unit: "bytes"}
 }
 
 func (p *ProfilerMemory) Sampler() Sampler {
