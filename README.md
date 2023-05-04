@@ -4,20 +4,32 @@
 
 # wzprof
 
-`wzprof`, pronounce "wa-zi-prof", is as pprof based profiler for WebAssembly built on top of Wazero.
-It gives you easy access to CPU and Memory profiles of your WASM modules.
+`wzprof`, pronounced as you think it should, is as pprof based profiler for
+WebAssembly built on top of Wazero. It offers the ability to collect CPU and
+Memory profiles during the execution of WebAssembly modules.
 
 ## Motivation
 
-`pprof` is one of the favorite profiling tool of any Go developer. Many WASM runtimes out there allow 
-to profile guest code via an external profiler, such as `perf`, but in many cases, you don't want to run 
-an external profiler and you just want a quick and easy access to your WASM module profiles.
+WebAssembly runtimes typically allow profiling guest code via an external
+profiler such as `perf`, but in many cases the recording and analysis of
+profiles remains a difficult task, especially due to features like JIT
+compilation.
 
-`wzprof` currently implements two profilers, CPU and Memory, and works with any language compiled to WASM.
-Developers can use the classic `go tool pprof` or any `pprof` compatible tool to consume their profiles.
+`pprof` is the de-factor standard profiling tool for Go programs, and offers
+some of the simplest and quickest ways to gather insight into the performance
+of an application.
 
+`wzprof` aims the combine the capabilities and user experience of `pprof`
+within a Wazero runtime, enabling the profiling of any application compiled
+to WebAssembly.
 
 ## Features
+
+`wzprof` mimics the approach and workflow popularized by Go pprof, and extends
+it to collect profiles of WebAssembly programs compiled from any programming
+language. The profiles produced are designed to be compatible with pprof,
+allowing developers to use the classic `go tool pprof` workflow to analyize
+application performance.
 
 - CPU: calls sampling and on-CPU time.
 - Memory: allocations (see below).
@@ -27,7 +39,8 @@ Developers can use the classic `go tool pprof` or any `pprof` compatible tool to
 
 ## Usage
 
-You can either use `wzprof` as a CLI or as a library if you use the Wazero runtime libraries.
+You can either use `wzprof` as a CLI or as a library if you use the Wazero
+runtime libraries.
 
 You can install the latest version of `wzprof` via:
 ```
@@ -95,6 +108,6 @@ Feel free to open a pull request to support more memory-allocating functions!
 The CPU samples profiler gives a repesentation of the guest execution by counting
 the number of time it seen an unique stack trace.
 
-The CPU time profiler measures the actual time spent on-CPU without taking into 
-account the off-CPU time (e.g waiting for I/O). For this profiler, all the host-functions
-are considered off-CPU.
+The CPU time profiler measures the actual time spent on-CPU without taking into
+account the off-CPU time (e.g waiting for I/O). For this profiler, all the
+host-functions are considered off-CPU.
