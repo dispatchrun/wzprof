@@ -6,3 +6,5 @@ github.com/stealthrocket/wazero v0.0.0-20230503192533-6860dd7061a1 h1:uVp9P2LrlW
 github.com/stealthrocket/wazero v0.0.0-20230503192533-6860dd7061a1/go.mod h1:wYx2gNRg8/WihJfSDxA1TIL8H+GkfLYm+bIfbblu9VQ=
 github.com/tetratelabs/wazero v1.1.1-0.20230504183622-31adf4dcc9d0 h1:lZTgJUZDq8FLKJZAXzw457WxKoIn6dyLuSB46O/YnXw=
 github.com/tetratelabs/wazero v1.1.1-0.20230504183622-31adf4dcc9d0/go.mod h1:wYx2gNRg8/WihJfSDxA1TIL8H+GkfLYm+bIfbblu9VQ=
+github.com/tetratelabs/wazero v1.1.1-0.20230504190004-dc3522d27d6b h1:g/zR01YKoEPGbq+0IwpUVEAxgAhnep5e1jNP6ZXNJao=
+github.com/tetratelabs/wazero v1.1.1-0.20230504190004-dc3522d27d6b/go.mod h1:wYx2gNRg8/WihJfSDxA1TIL8H+GkfLYm+bIfbblu9VQ=
