@@ -207,59 +207,56 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 		prof.SampleType = append(prof.SampleType, &t)
 	}
 
-	type entry struct { // TODO: this is literaly profile.Sample, use that instead
-		counts    []int64
-		locations []*profile.Location
-	}
-
-	counters := make(map[uint64]entry)
+	counters := make(map[uint64]*profile.Sample)
 	bx := make([]byte, 8)
 
 	var off []*profile.Location
 
 	p.samplesMu.Lock()
 	for e := p.samples.Front(); e != nil; e = e.Next() {
-		locations := []*profile.Location{}
 		h := maphash.Hash{}
 		h.SetSeed(hashseed)
 
-		s := e.Value.(sample)
-		for _, f := range s.stack {
+		sample := e.Value.(sample)
+		location := make([]*profile.Location, len(sample.stack))
+
+		for i, frame := range sample.stack {
 			// TODO: when known, f.pc may be enough
 			// instead of using name.
-			binary.LittleEndian.PutUint64(bx, f.pc)
-			h.WriteString(f.fn.Name())
+			binary.LittleEndian.PutUint64(bx, frame.pc)
+			h.WriteString(frame.fn.Name())
 			h.Write(bx)
-			loc := p.locationForCall(prof, f)
-			locations = append(locations, loc)
+			location[i] = p.locationForCall(prof, frame)
 		}
 
-		if s.isIO {
-			off = append(off, locations[0])
+		if sample.isIO {
+			off = append(off, location[0])
 		}
 
 		sum64 := h.Sum64()
-		e, ok := counters[sum64]
-		if !ok {
-			e = entry{
-				counts:    make([]int64, len(s.values)),
-				locations: locations,
+		count := counters[sum64]
+		if count == nil {
+			count = &profile.Sample{
+				Location: location,
+				Value:    make([]int64, len(sample.values)),
 			}
-			counters[sum64] = e
+			counters[sum64] = count
 		}
-		for i, c := range s.values {
-			e.counts[i] += c
+
+		// The number of values in the counter should always match the number
+		// of samples because the counter is associated with a unique hash
+		// generated from the samples.
+		counterValues := count.Value[:len(sample.values)]
+
+		for i, v := range sample.values {
+			counterValues[i] += v
 		}
 	}
 
 	p.samples = nil
 	p.samplesMu.Unlock()
 
-	for _, count := range counters {
-		sample := &profile.Sample{
-			Value:    count.counts,
-			Location: count.locations,
-		}
+	for _, sample := range counters {
 		prof.Sample = append(prof.Sample, sample)
 
 		for i, p := range p.profilers {
