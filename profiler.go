@@ -173,30 +173,6 @@ type sample struct {
 	isIO   bool
 }
 
-func (p *ProfilerListener) report(si experimental.StackIterator, values []int64) {
-	sample := sample{
-		stack:  make([]stackEntry, 0, p.lastStackSize+1),
-		values: make([]int64, len(values)),
-	}
-	copy(sample.values, values)
-	for si.Next() {
-		fn := si.FunctionDefinition()
-		pc := si.SourceOffset()
-		sample.stack = append(sample.stack, stackEntry{fn: fn, pc: pc})
-	}
-	p.samplesMu.Lock()
-	if p.samples == nil {
-		p.samples = list.New()
-	}
-	p.samples.PushBack(sample)
-	if p.samples.Len() >= DefaultMaxStacksCount {
-		e := p.samples.Front()
-		p.samples.Remove(e)
-	}
-	p.samplesMu.Unlock()
-	p.lastStackSize = len(sample.stack)
-}
-
 func (p *ProfilerListener) reportSample(s sample) {
 	p.samplesMu.Lock()
 	if p.samples == nil {
