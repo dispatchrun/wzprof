@@ -19,12 +19,12 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/maphash"
 	"io"
 	"log"
 	"strings"
 	"sync"
 
-	"github.com/cespare/xxhash"
 	"github.com/google/pprof/profile"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -216,6 +216,8 @@ type offCPULocations struct {
 	val      int64
 }
 
+var hashseed = maphash.MakeSeed()
+
 // BuildProfile builds a pprof Profile from the collected
 // samples. After collection all samples are cleared.
 func (p *ProfilerListener) BuildProfile() *profile.Profile {
@@ -242,14 +244,15 @@ func (p *ProfilerListener) BuildProfile() *profile.Profile {
 	p.samplesMu.Lock()
 	for e := p.samples.Front(); e != nil; e = e.Next() {
 		locations := []*profile.Location{}
-		h := xxhash.New() // TODO: create once and reset?
+		h := maphash.Hash{}
+		h.SetSeed(hashseed)
 
 		s := e.Value.(sample)
 		for _, f := range s.stack {
 			// TODO: when known, f.pc may be enough
 			// instead of using name.
 			binary.LittleEndian.PutUint64(bx, f.pc)
-			h.Write([]byte(f.fn.Name()))
+			h.WriteString(f.fn.Name())
 			h.Write(bx)
 			loc := p.locationForCall(prof, f)
 			locations = append(locations, loc)
