@@ -10,10 +10,10 @@ import (
 )
 
 // This test file performs end-to-end validation of the profiler on actual wasm
-// binary files. They are located at internal/testdata/. Tests are very
-// sensitive to the content of those files. If you rebuild them, you will likely
-// need to rebuild the expected samples below. Use the printSamples() function
-// to help you with that.
+// binary files. They are located in testdata. Tests are very sensitive to the
+// content of those files. If you rebuild them, you will likely need to rebuild
+// the expected samples below. Use the printSamples() function to help you with
+// that.
 
 func TestDataCSimple(t *testing.T) {
 	expectedSamples := []sample{
@@ -52,7 +52,7 @@ func TestDataCSimple(t *testing.T) {
 	}
 
 	prog := program{
-		WasmPath:    "../../internal/testdata/c/simple.wasm",
+		WasmPath:    "../../testdata/c/simple.wasm",
 		CPUSampling: 1.0,
 		Profilers:   "cpu,mem",
 	}
@@ -97,7 +97,7 @@ func TestDataRustSimple(t *testing.T) {
 	}
 
 	prog := program{
-		WasmPath:    "../../internal/testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm",
+		WasmPath:    "../../testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm",
 		CPUSampling: 1.0,
 		Profilers:   "cpu,mem",
 	}
