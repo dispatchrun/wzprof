@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -26,61 +25,97 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/pprof/profile"
 	flag "github.com/spf13/pflag"
 	"github.com/stealthrocket/wzprof"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
 func main() {
-	if err := run(); err != nil {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	if err := run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-const defaultCPUSampling = 0.2
+const defaultSampleRate = 1.0 / 19
 
 type program struct {
-	WasmPath     string
-	File         string
-	HttpAddr     string
-	CPUSampling  float64
-	CPUIncludeIO bool
-	Profilers    string
-	Mounts       []string
+	filePath   string
+	pprofAddr  string
+	cpuProfile string
+	memProfile string
+	sampleRate float64
+	hostTime   bool
+	mounts     []string
 }
 
-func (prog program) Execute(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	wasmName := filepath.Base(prog.WasmPath)
-	wasmCode, err := os.ReadFile(prog.WasmPath)
+func (prog *program) run(ctx context.Context) error {
+	wasmName := filepath.Base(prog.filePath)
+	wasmCode, err := os.ReadFile(prog.filePath)
 	if err != nil {
-		return fmt.Errorf("cannot open WASM file at '%s': %w", prog.WasmPath, err)
+		return fmt.Errorf("loading wasm module: %w", err)
 	}
 
-	pfs := []wzprof.Profiler{}
-	pfnames := strings.Split(prog.Profilers, ",")
-	for _, name := range pfnames {
-		switch name {
-		case "mem":
-			pfs = append(pfs, &wzprof.ProfilerMemory{})
-		case "cpu":
-			pfs = append(pfs, &wzprof.ProfilerCPU{Sampling: float32(prog.CPUSampling)})
-		case "cputime":
-			pfs = append(pfs, &wzprof.ProfilerCPUTime{Sampling: float32(prog.CPUSampling), IncludeIO: prog.CPUIncludeIO})
-		}
+	cpu := wzprof.NewCPUProfiler(time.Now, wzprof.EnableHostTime(prog.hostTime))
+	mem := wzprof.NewMemoryProfiler(time.Now)
+
+	var listeners []experimental.FunctionListenerFactory
+	if prog.cpuProfile != "" || prog.pprofAddr != "" {
+		listeners = append(listeners, wzprof.SampledFunctionListenerFactory(prog.sampleRate, cpu))
+	}
+	if prog.memProfile != "" || prog.pprofAddr != "" {
+		listeners = append(listeners, wzprof.SampledFunctionListenerFactory(prog.sampleRate, mem))
 	}
 
-	pl := wzprof.NewProfileListener(pfs...)
-	ctx = pl.Register(ctx)
+	ctx = context.WithValue(ctx,
+		experimental.FunctionListenerFactoryKey{},
+		experimental.MultiFunctionListenerFactory(listeners...),
+	)
 
-	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
+	runtime := wazero.NewRuntime(ctx)
 	defer runtime.Close(ctx)
+
+	compiledModule, err := runtime.CompileModule(ctx, wasmCode)
+	if err != nil {
+		return fmt.Errorf("compiling wasm module: %w", err)
+	}
+
+	symbols, err := wzprof.BuildDwarfSymbolizer(compiledModule)
+	if err != nil {
+		return fmt.Errorf("symbolizing wasm module: %w", err)
+	}
+
+	if prog.pprofAddr != "" {
+		http.Handle("/debug/pprof/profile", cpu.NewHandler(prog.sampleRate, symbols))
+		http.Handle("/debug/pprof/heap", mem.NewHandler(prog.sampleRate, symbols))
+
+		go func() {
+			if err := http.ListenAndServe(prog.pprofAddr, nil); err != nil {
+				log.Println(err)
+			}
+		}()
+	}
+
+	if prog.cpuProfile != "" {
+		cpu.StartProfile()
+		defer func() {
+			writeProfile(prog.cpuProfile, cpu.StopProfile(prog.sampleRate, symbols))
+		}()
+	}
+
+	if prog.memProfile != "" {
+		defer func() {
+			writeProfile(prog.memProfile, mem.NewProfile(prog.sampleRate, symbols))
+		}()
+	}
 
 	wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
 
@@ -93,110 +128,60 @@ func (prog program) Execute(ctx context.Context) error {
 		WithSysNanotime().
 		WithSysWalltime().
 		WithArgs(wasmName).
-		WithFSConfig(createFSConfig(prog.Mounts))
+		WithFSConfig(createFSConfig(prog.mounts))
 
-	errC := make(chan error)
-	go func() {
-		defer cancel()
-		compiled, err := runtime.CompileModule(ctx, wasmCode)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		pl.PrepareSymbols(compiled)
-
-		defer func() {
-			if err := compiled.Close(ctx); err != nil {
-				log.Printf("error closing module: %v", err)
-			}
-		}()
-
-		instance, err := runtime.InstantiateModule(ctx, compiled, config)
-		if err != nil {
-			// If any error occurs during the module execution, we don't write the profile.
-			errC <- err
-			return
-		}
-
-		if err := instance.Close(ctx); err != nil {
-			log.Printf("error closing instance: %v", err)
-		}
-	}()
-
-	if prog.HttpAddr != "" {
-		http.DefaultServeMux.Handle("/debug/guest", pl)
-
-		go func() {
-			if err := http.ListenAndServe(prog.HttpAddr, nil); err != nil {
-				log.Println(err)
-			}
-		}()
+	instance, err := runtime.InstantiateModule(ctx, compiledModule, config)
+	if err != nil {
+		return fmt.Errorf("instantiating module: %w", err)
 	}
-
-	var modErr error
-	select {
-	case err := <-errC:
-		modErr = err
-	case <-ctx.Done():
-		cancel()
+	if err := instance.Close(ctx); err != nil {
+		return fmt.Errorf("closing module: %w", err)
 	}
-
-	if prog.File != "" && modErr == nil {
-		if err := writeFile(prog.File, pl.BuildProfile()); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
-func run() error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
+var (
+	pprofAddr  string
+	cpuProfile string
+	memProfile string
+	sampleRate float64
+	hostTime   bool
+	mounts     []string
+)
 
-	var (
-		file         = flag.String("pprof-file", "", "Filename to write profile to")
-		httpAddr     = flag.String("pprof-addr", "", "HTTP server address")
-		cpuSampling  = flag.Float64("cpu-sampling", defaultCPUSampling, "CPU sampling rate")
-		cpuIncludeIO = flag.Bool("cpu-include-io", false, "Include I/O in CPU time profiling")
-		profilers    = flag.String("profilers", "cputime,cpu,mem", "Comma-separated list of profilers to use")
-		mounts       = flag.StringSlice("mount", []string{}, "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro)")
-		verbose      = flag.Bool("verbose", false, "Verbose logging")
-	)
+func init() {
+	log.Default().SetOutput(os.Stderr)
+	flag.StringVar(&pprofAddr, "pprof-addr", "", "Address where to expose a pprof HTTP endpoint.")
+	flag.StringVar(&cpuProfile, "cpuprofile", "", "Write a CPU profile to the specified file before exiting.")
+	flag.StringVar(&memProfile, "memprofile", "", "Write a memory profile to the specified file before exiting.")
+	flag.Float64Var(&sampleRate, "sampling", defaultSampleRate, "Set the profile sampling rate (0-1).")
+	flag.BoolVar(&hostTime, "cpuhost", false, "Include time spent in host function calls.")
+	flag.StringSliceVar(&mounts, "mount", nil, "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
+}
 
+func run(ctx context.Context) error {
 	flag.Parse()
-
-	log.Default().SetOutput(io.Discard)
-	if *verbose {
-		log.Default().SetOutput(os.Stderr)
-	}
 
 	args := flag.Args()
 	if len(args) != 1 {
+		// TODO: pring flag usage
 		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
 	}
-	wasmPath := args[0]
 
-	return program{
-		WasmPath:     wasmPath,
-		File:         *file,
-		HttpAddr:     *httpAddr,
-		CPUSampling:  *cpuSampling,
-		CPUIncludeIO: *cpuIncludeIO,
-		Profilers:    *profilers,
-		Mounts:       *mounts,
-	}.Execute(ctx)
+	return (&program{
+		filePath:   args[0],
+		cpuProfile: cpuProfile,
+		memProfile: memProfile,
+		sampleRate: sampleRate,
+		hostTime:   hostTime,
+		mounts:     mounts,
+	}).run(ctx)
 }
 
-func writeFile(fname string, p *profile.Profile) error {
-	log.Printf("writing profile to %s", fname)
-	f, err := os.Create(fname)
-	if err != nil {
-		return err
+func writeProfile(path string, prof *profile.Profile) {
+	if err := wzprof.WriteProfile(path, prof); err != nil {
+		log.Fatalf("ERROR: writing profile: %s", err)
 	}
-	defer f.Close()
-
-	return p.Write(f)
 }
 
 func createFSConfig(mounts []string) wazero.FSConfig {

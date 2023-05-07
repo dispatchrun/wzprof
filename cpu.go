@@ -15,52 +15,194 @@
 package wzprof
 
 import (
+	"context"
+	"net/http"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/pprof/profile"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
-// ProfilerCPU is a sampled based CPU profiler. This profiler is counting
-// the stacks for each functions. The sampling rate is between 0.0 and 1.0.
+// CPUProfiler is the implementation of a performance profiler recording
+// samples of CPU time spent in functions of a WebAssembly module.
 //
-// CPU samples profiles provide a good overview of the CPU usage of a program.
-// while keeping the overhead low.
-type ProfilerCPU struct {
-	// Sampling rate between 0.0 and 1.0
-	Sampling float32
+// The profiler generates samples of two types:
+// - "cpu_sample" counts the number of function calls
+// - "cpu_time" records the time spent in function calls (in nanosecond)
+type CPUProfiler struct {
+	mutex  sync.Mutex
+	counts stackCounterMap
+	frames []cpuTimeFrame
+	traces []stackTrace
+	time   func() time.Time
+	epoch  time.Time
+	host   bool
 }
 
-type cpuprocessor struct{}
+// CPUProfilerOption is a type used to represent configuration options for
+// CPUProfiler instances created by NewCPUProfiler.
+type CPUProfilerOption func(*CPUProfiler)
 
-func (p cpuprocessor) Before(mod api.Module, params []uint64) int64 {
-	return 1
+// EnableHostTime confiures a CPU time profiler to acount for time spent
+// in calls to host functions.
+//
+// Default to false.
+func EnableHostTime(enable bool) CPUProfilerOption {
+	return func(p *CPUProfiler) { p.host = enable }
 }
 
-func (p cpuprocessor) After(in int64, results []uint64) int64 {
-	return in
+type cpuTimeFrame struct {
+	start int64
+	trace stackTrace
 }
 
-func (p *ProfilerCPU) Register() map[string]ProfileProcessor {
-	return map[string]ProfileProcessor{
-		"count1": cpuprocessor{},
+// NewCPUProfiler constructs a new instance of CPUProfiler using the
+// given time function to record the CPU time consumed.
+//
+// The time function is expected to generate time.Time values embedding a
+// monotonic clock to support computing accurate time deltas. time.Now is a
+// valid function to construct the profiler with.
+func NewCPUProfiler(time func() time.Time, options ...CPUProfilerOption) *CPUProfiler {
+	p := &CPUProfiler{
+		time: time,
 	}
+	for _, opt := range options {
+		opt(p)
+	}
+	return p
 }
 
-func (p *ProfilerCPU) Listen(name string) string {
-	return "count1"
+// StartProfile begins recording the CPU profile. The method returns a boolean
+// to indicate whether starting the profile suceeded (e.g. false is returned if
+// it was already started).
+func (p *CPUProfiler) StartProfile() bool {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if p.counts != nil {
+		return false // already started
+	}
+
+	p.counts = make(stackCounterMap)
+	p.epoch = p.time()
+	return true
 }
 
-func (p *ProfilerCPU) SampleType() *profile.ValueType {
-	return &profile.ValueType{Type: "cpu_samples", Unit: "count"}
+// StopProfile stops recording and returns the CPU profile. The method returns
+// nil if recording of the CPU profile wasn't started.
+func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
+	p.mutex.Lock()
+	samples, epoch := p.counts, p.epoch
+	p.counts = nil
+	p.mutex.Unlock()
+
+	if samples == nil {
+		return nil
+	}
+
+	return buildProfile(sampleRate, symbols, samples, epoch, p.time(),
+		[]*profile.ValueType{
+			{Type: "cpu_sample", Unit: "count"},
+			{Type: "cpu_time", Unit: "nanosecond"},
+		},
+	)
 }
 
-func (p *ProfilerCPU) Sampler() Sampler {
-	return newRandomSampler(time.Now().UnixNano(), p.Sampling)
+// NewHandler returns a http handler allowing the profiler to be exposed on a
+// pprof-compatible http endpoint.
+//
+// The sample rate is a value between 0 and 1 used to scale the profile results
+// based on the sampling rate applied to the profiler so the resulting values
+// remain representative.
+//
+// The symbolizer passed as argument is used to resolve names of program
+// locations recorded in the profile.
+func (p *CPUProfiler) NewHandler(sampleRate float64, symbols Symbolizer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		duration := 30 * time.Second
+
+		if seconds := r.FormValue("seconds"); seconds != "" {
+			n, err := strconv.ParseInt(seconds, 10, 64)
+			if err == nil && n > 0 {
+				duration = time.Duration(n) * time.Second
+			}
+		}
+
+		ctx := r.Context()
+		deadline, ok := ctx.Deadline()
+		if ok {
+			if timeout := time.Until(deadline); duration > timeout {
+				serveError(w, http.StatusBadRequest, "profile duration exceeds server's WriteTimeout")
+				return
+			}
+		}
+
+		if !p.StartProfile() {
+			serveError(w, http.StatusInternalServerError, "Could not enable CPU profiling: profiler already running")
+			return
+		}
+
+		timer := time.NewTimer(duration)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+		}
+		timer.Stop()
+		serveProfile(w, p.StopProfile(sampleRate, symbols))
+	})
 }
 
-func (p *ProfilerCPU) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
-	// no post process for this profiler
+// NewListener returns a function listener suited to record CPU timings of
+// calls to the function passed as argument.
+func (p *CPUProfiler) NewListener(def api.FunctionDefinition) experimental.FunctionListener {
+	return cpuListener{p}
 }
 
-var _ Profiler = &ProfilerCPU{}
+type cpuListener struct{ *CPUProfiler }
+
+func (p cpuListener) now() int64 {
+	return int64(p.time().Sub(p.epoch))
+}
+
+func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+	var frame cpuTimeFrame
+	p.mutex.Lock()
+
+	if p.counts != nil && (p.host || def.GoFunction() == nil) {
+		start := p.now()
+		trace := stackTrace{}
+
+		if i := len(p.traces); i > 0 {
+			i--
+			trace = p.traces[i]
+			p.traces = p.traces[:i]
+		}
+
+		frame = cpuTimeFrame{
+			start: start,
+			trace: makeStackTrace(trace, si),
+		}
+	}
+
+	p.frames = append(p.frames, frame)
+	p.mutex.Unlock()
+	return ctx
+}
+
+func (p cpuListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+	p.mutex.Lock()
+
+	i := len(p.frames) - 1
+	f := p.frames[i]
+	p.frames = p.frames[:i]
+
+	if f.start != 0 {
+		p.counts.observe(f.trace, p.now()-f.start)
+		p.traces = append(p.traces, f.trace)
+	}
+
+	p.mutex.Unlock()
+}

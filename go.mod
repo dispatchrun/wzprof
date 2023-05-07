@@ -9,4 +9,6 @@ require (
 
 require github.com/spf13/pflag v1.0.5
 
-replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230503192533-6860dd7061a1
+require golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53
+
+replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230506195512-778fba8a2815
