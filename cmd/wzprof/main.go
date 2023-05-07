@@ -40,8 +40,12 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		switch err {
+		case context.Canceled:
+		default:
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -80,8 +84,9 @@ func (prog *program) run(ctx context.Context) error {
 		experimental.MultiFunctionListenerFactory(listeners...),
 	)
 
-	runtime := wazero.NewRuntime(ctx)
-	defer runtime.Close(ctx)
+	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
+		WithDebugInfoEnabled(true).
+		WithCustomSections(true))
 
 	compiledModule, err := runtime.CompileModule(ctx, wasmCode)
 	if err != nil {
@@ -117,27 +122,35 @@ func (prog *program) run(ctx context.Context) error {
 		}()
 	}
 
-	wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
+	ctx, cancel := context.WithCancelCause(ctx)
+	go func() {
+		defer cancel(nil)
+		wasi_snapshot_preview1.MustInstantiate(ctx, runtime)
 
-	config := wazero.NewModuleConfig().
-		WithStdout(os.Stdout).
-		WithStderr(os.Stderr).
-		WithStdin(os.Stdin).
-		WithRandSource(rand.Reader).
-		WithSysNanosleep().
-		WithSysNanotime().
-		WithSysWalltime().
-		WithArgs(wasmName).
-		WithFSConfig(createFSConfig(prog.mounts))
+		config := wazero.NewModuleConfig().
+			WithStdout(os.Stdout).
+			WithStderr(os.Stderr).
+			WithStdin(os.Stdin).
+			WithRandSource(rand.Reader).
+			WithSysNanosleep().
+			WithSysNanotime().
+			WithSysWalltime().
+			WithArgs(wasmName).
+			WithFSConfig(createFSConfig(prog.mounts))
 
-	instance, err := runtime.InstantiateModule(ctx, compiledModule, config)
-	if err != nil {
-		return fmt.Errorf("instantiating module: %w", err)
-	}
-	if err := instance.Close(ctx); err != nil {
-		return fmt.Errorf("closing module: %w", err)
-	}
-	return nil
+		instance, err := runtime.InstantiateModule(ctx, compiledModule, config)
+		if err != nil {
+			cancel(fmt.Errorf("instantiating module: %w", err))
+			return
+		}
+		if err := instance.Close(ctx); err != nil {
+			cancel(fmt.Errorf("closing module: %w", err))
+			return
+		}
+	}()
+
+	<-ctx.Done()
+	return context.Cause(ctx)
 }
 
 var (

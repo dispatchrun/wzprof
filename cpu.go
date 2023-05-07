@@ -170,6 +170,7 @@ func (p cpuListener) now() int64 {
 func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
 	var frame cpuTimeFrame
 	p.mutex.Lock()
+	defer p.mutex.Unlock()
 
 	if p.counts != nil && (p.host || def.GoFunction() == nil) {
 		start := p.now()
@@ -188,12 +189,12 @@ func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.Functio
 	}
 
 	p.frames = append(p.frames, frame)
-	p.mutex.Unlock()
 	return ctx
 }
 
 func (p cpuListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
 	p.mutex.Lock()
+	defer p.mutex.Unlock()
 
 	i := len(p.frames) - 1
 	f := p.frames[i]
@@ -203,6 +204,4 @@ func (p cpuListener) After(ctx context.Context, mod api.Module, def api.Function
 		p.counts.observe(f.trace, p.now()-f.start)
 		p.traces = append(p.traces, f.trace)
 	}
-
-	p.mutex.Unlock()
 }
