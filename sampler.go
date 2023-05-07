@@ -46,8 +46,8 @@ func (emptyFunctionListenerFactory) NewListener(api.FunctionDefinition) experime
 }
 
 type sampler struct {
-	cycle uint64
 	count uint64
+	cycle uint64
 	stack bitstack
 }
 
