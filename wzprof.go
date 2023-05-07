@@ -135,19 +135,19 @@ func (scm stackCounterMap) observe(st stackTrace, val int64) {
 
 type stackCounter struct {
 	stack stackTrace
-	value [2]int64 // count, total
+	value [2]int64 // total, count
 }
 
 func (sc *stackCounter) observe(value int64) {
-	sc.value[0] += 1
-	sc.value[1] += value
-}
-
-func (sc *stackCounter) count() int64 {
-	return sc.value[0]
+	sc.value[0] += value
+	sc.value[1] += 1
 }
 
 func (sc *stackCounter) total() int64 {
+	return sc.value[0]
+}
+
+func (sc *stackCounter) count() int64 {
 	return sc.value[1]
 }
 

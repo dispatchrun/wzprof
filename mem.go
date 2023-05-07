@@ -75,17 +75,17 @@ func NewMemoryProfiler(time func() time.Time, opts ...MemoryProfilerOption) *Mem
 func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
 	return buildProfile(sampleRate, symbols, p.snapshot(), p.epoch, p.time(),
 		[]*profile.ValueType{
-			{Type: "alloc_object", Unit: "count"},
 			{Type: "alloc_space", Unit: "byte"},
-			{Type: "inuse_object", Unit: "count"},
+			{Type: "alloc_object", Unit: "count"},
 			{Type: "inuse_space", Unit: "byte"},
+			{Type: "inuse_object", Unit: "count"},
 		},
 	)
 }
 
 type memorySample struct {
 	stack stackTrace
-	value [4]int64 // allocCount, allocBytes, inuseCount, inuseBytes
+	value [4]int64 // allocBytes, allocCount, inuseBytes, inuseCount
 }
 
 func (m *memorySample) sampleLocation() stackTrace {
@@ -112,14 +112,14 @@ func (p *MemoryProfiler) snapshot() map[uint64]*memorySample {
 			p = &memorySample{stack: alloc.stack}
 			samples[alloc.stack.key] = p
 		}
-		p.value[0] += alloc.count()
-		p.value[1] += alloc.total()
+		p.value[0] += alloc.total()
+		p.value[1] += alloc.count()
 	}
 
 	for _, inuse := range p.inuse {
 		p := samples[inuse.stack.key]
-		p.value[2] += 1
-		p.value[3] += int64(inuse.size)
+		p.value[2] += int64(inuse.size)
+		p.value[3] += 1
 	}
 
 	return samples

@@ -105,8 +105,8 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 
 	return buildProfile(sampleRate, symbols, samples, epoch, p.time(),
 		[]*profile.ValueType{
-			{Type: "cpu_sample", Unit: "count"},
 			{Type: "cpu_time", Unit: "nanosecond"},
+			{Type: "cpu_sample", Unit: "count"},
 		},
 	)
 }
