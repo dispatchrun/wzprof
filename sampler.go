@@ -19,7 +19,7 @@ import (
 // are invoked for all function calls.
 func SampledFunctionListenerFactory(sampleRate float64, factory experimental.FunctionListenerFactory) experimental.FunctionListenerFactory {
 	if sampleRate <= 0 {
-		return discardFunctionListenerFactory{}
+		return emptyFunctionListenerFactory{}
 	}
 	if sampleRate >= 1 {
 		return factory
@@ -39,9 +39,9 @@ func SampledFunctionListenerFactory(sampleRate float64, factory experimental.Fun
 	})
 }
 
-type discardFunctionListenerFactory struct{}
+type emptyFunctionListenerFactory struct{}
 
-func (discardFunctionListenerFactory) NewListener(api.FunctionDefinition) experimental.FunctionListener {
+func (emptyFunctionListenerFactory) NewListener(api.FunctionDefinition) experimental.FunctionListener {
 	return nil
 }
 
