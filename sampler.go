@@ -90,14 +90,14 @@ func (s *bitstack) push(bit uint) {
 		s.bits = bits
 	}
 
-	s.bits[index] &= ^(1 << shift)
+	s.bits[index] &= ^(uint64(1) << shift)
 	s.bits[index] |= uint64(bit&1) << shift
 	s.size++
 }
 
 func (s *bitstack) pop() uint {
+	s.size--
 	index := s.size / 64
 	shift := s.size % 64
-	s.size--
 	return uint(s.bits[index]>>shift) & 1
 }
