@@ -103,6 +103,19 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 		return nil
 	}
 
+	if !p.host {
+		for k, sample := range samples {
+			if sample.stack.host() {
+				delete(samples, k)
+				for _, other := range samples {
+					if sample.stack.contains(other.stack) {
+						other.subtract(sample.total())
+					}
+				}
+			}
+		}
+	}
+
 	return buildProfile(sampleRate, symbols, samples, epoch, p.time(),
 		[]*profile.ValueType{
 			{Type: "cpu", Unit: "nanoseconds"},

@@ -1,6 +1,7 @@
 package wzprof
 
 import (
+	"bytes"
 	"fmt"
 	"hash/maphash"
 	"os"
@@ -151,6 +152,14 @@ func (sc *stackCounter) count() int64 {
 	return sc.value[1]
 }
 
+func (sc *stackCounter) subtract(value int64) {
+	if total := sc.total(); total < value {
+		sc.value[0] = 0
+	} else {
+		sc.value[0] -= value
+	}
+}
+
 func (sc *stackCounter) sampleLocation() stackTrace {
 	return sc.stack
 }
@@ -179,6 +188,25 @@ func makeStackTrace(st stackTrace, si experimental.StackIterator) stackTrace {
 	}
 	st.key = maphash.Bytes(stackTraceHashSeed, st.bytes())
 	return st
+}
+
+func (st stackTrace) host() bool {
+	return len(st.fns) > 0 && st.fns[0].GoFunction() != nil
+}
+
+func (st stackTrace) contains(sx stackTrace) bool {
+	if len(st.fns) < len(sx.fns) {
+		return false
+	}
+	n := len(st.fns) - len(sx.fns)
+	st.fns = st.fns[n:]
+	st.pcs = st.pcs[n:]
+	if st.fns[0] != sx.fns[0] {
+		return false
+	}
+	st.pcs = st.pcs[1:]
+	sx.pcs = sx.pcs[1:]
+	return bytes.Equal(st.bytes(), sx.bytes())
 }
 
 func (st stackTrace) len() int {
