@@ -26,7 +26,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/pprof/profile"
 	"github.com/tetratelabs/wazero"
@@ -65,8 +64,8 @@ func (prog *program) run(ctx context.Context) error {
 		return fmt.Errorf("loading wasm module: %w", err)
 	}
 
-	cpu := wzprof.NewCPUProfiler(time.Now, wzprof.EnableHostTime(prog.hostTime))
-	mem := wzprof.NewMemoryProfiler(time.Now)
+	cpu := wzprof.NewCPUProfiler(wzprof.EnableHostTime(prog.hostTime))
+	mem := wzprof.NewMemoryProfiler()
 
 	var listeners []experimental.FunctionListenerFactory
 	if prog.cpuProfile != "" || prog.pprofAddr != "" {

@@ -15,6 +15,9 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+//go:linkname walltime runtime.walltime
+func walltime() int64
+
 // WriteProfile writes a profile to a file at the given path.
 func WriteProfile(path string, prof *profile.Profile) error {
 	w, err := os.Create(path)
@@ -249,12 +252,12 @@ type sampleType interface {
 	sampleValue() []int64
 }
 
-func buildProfile[T sampleType](sampleRate float64, symbols Symbolizer, samples map[uint64]T, start, end time.Time, sampleType []*profile.ValueType) *profile.Profile {
+func buildProfile[T sampleType](sampleRate float64, symbols Symbolizer, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType) *profile.Profile {
 	prof := &profile.Profile{
 		SampleType:    sampleType,
 		Sample:        make([]*profile.Sample, 0, len(samples)),
 		TimeNanos:     start.UnixNano(),
-		DurationNanos: int64(end.Sub(start)),
+		DurationNanos: int64(duration),
 	}
 
 	locationID := uint64(1)

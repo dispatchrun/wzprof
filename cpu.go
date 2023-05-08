@@ -37,8 +37,8 @@ type CPUProfiler struct {
 	counts stackCounterMap
 	frames []cpuTimeFrame
 	traces []stackTrace
-	time   func() time.Time
-	epoch  time.Time
+	time   func() int64
+	start  time.Time
 	host   bool
 }
 
@@ -54,6 +54,14 @@ func EnableHostTime(enable bool) CPUProfilerOption {
 	return func(p *CPUProfiler) { p.host = enable }
 }
 
+// TimeFunc configures the time function used by the CPU profiler to collect
+// monotonic timestamps.
+//
+// By default, the system's monotonic time is used.
+func TimeFunc(time func() int64) CPUProfilerOption {
+	return func(p *CPUProfiler) { p.time = time }
+}
+
 type cpuTimeFrame struct {
 	start int64
 	trace stackTrace
@@ -61,13 +69,9 @@ type cpuTimeFrame struct {
 
 // NewCPUProfiler constructs a new instance of CPUProfiler using the
 // given time function to record the CPU time consumed.
-//
-// The time function is expected to generate time.Time values embedding a
-// monotonic clock to support computing accurate time deltas. time.Now is a
-// valid function to construct the profiler with.
-func NewCPUProfiler(time func() time.Time, options ...CPUProfilerOption) *CPUProfiler {
+func NewCPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
 	p := &CPUProfiler{
-		time: time,
+		time: walltime,
 	}
 	for _, opt := range options {
 		opt(p)
@@ -87,7 +91,7 @@ func (p *CPUProfiler) StartProfile() bool {
 	}
 
 	p.counts = make(stackCounterMap)
-	p.epoch = p.time()
+	p.start = time.Now()
 	return true
 }
 
@@ -95,13 +99,15 @@ func (p *CPUProfiler) StartProfile() bool {
 // nil if recording of the CPU profile wasn't started.
 func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
 	p.mutex.Lock()
-	samples, epoch := p.counts, p.epoch
+	samples, start := p.counts, p.start
 	p.counts = nil
 	p.mutex.Unlock()
 
 	if samples == nil {
 		return nil
 	}
+
+	duration := time.Since(start)
 
 	if !p.host {
 		for k, sample := range samples {
@@ -116,7 +122,7 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 		}
 	}
 
-	return buildProfile(sampleRate, symbols, samples, epoch, p.time(),
+	return buildProfile(sampleRate, symbols, samples, start, duration,
 		[]*profile.ValueType{
 			{Type: "cpu", Unit: "nanoseconds"},
 			{Type: "samples", Unit: "count"},
@@ -176,16 +182,12 @@ func (p *CPUProfiler) NewListener(def api.FunctionDefinition) experimental.Funct
 
 type cpuListener struct{ *CPUProfiler }
 
-func (p cpuListener) now() int64 {
-	return int64(p.time().Sub(p.epoch))
-}
-
 func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
 	var frame cpuTimeFrame
 	p.mutex.Lock()
 
 	if p.counts != nil {
-		start := p.now()
+		start := p.time()
 		trace := stackTrace{}
 
 		if i := len(p.traces); i > 0 {
@@ -214,7 +216,7 @@ func (p cpuListener) After(ctx context.Context, mod api.Module, def api.Function
 
 	if f.start != 0 {
 		if p.counts != nil {
-			p.counts.observe(f.trace, p.now()-f.start)
+			p.counts.observe(f.trace, p.time()-f.start)
 		}
 		p.traces = append(p.traces, f.trace)
 	}

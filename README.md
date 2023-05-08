@@ -57,8 +57,8 @@ The profiler is propagated to the Wazero runtime through its context:
 ```go
 sampleRate := 1.0
 
-cpu := wzprof.NewCPUProfiler(time.Now)
-mem := wzprof.NewMemoryProfiler(time.Now)
+cpu := wzprof.NewCPUProfiler()
+mem := wzprof.NewMemoryProfiler()
 
 ctx := context.WithValue(context.Background(),
 	experimental.FunctionListenerFactoryKey{},
