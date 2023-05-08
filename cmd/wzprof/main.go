@@ -95,11 +95,12 @@ func (prog *program) run(ctx context.Context) error {
 	}
 
 	if prog.pprofAddr != "" {
-		http.Handle("/debug/pprof/profile", cpu.NewHandler(prog.sampleRate, symbols))
-		http.Handle("/debug/pprof/heap", mem.NewHandler(prog.sampleRate, symbols))
+		pprof := http.NewServeMux()
+		pprof.Handle("/debug/pprof/profile", cpu.NewHandler(prog.sampleRate, symbols))
+		pprof.Handle("/debug/pprof/heap", mem.NewHandler(prog.sampleRate, symbols))
 
 		go func() {
-			if err := http.ListenAndServe(prog.pprofAddr, nil); err != nil {
+			if err := http.ListenAndServe(prog.pprofAddr, pprof); err != nil {
 				log.Println(err)
 			}
 		}()
@@ -186,6 +187,7 @@ func run(ctx context.Context) error {
 
 	return (&program{
 		filePath:   args[0],
+		pprofAddr:  pprofAddr,
 		cpuProfile: cpuProfile,
 		memProfile: memProfile,
 		sampleRate: sampleRate,

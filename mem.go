@@ -30,13 +30,13 @@ import (
 // samples of memory allocation and utilization.
 //
 // The profiler generates the following samples:
-// - "alloc_object" records the locations where objects are allocated
-// - "alloc_bytes" records the locations where bytes are allocated
-// - "inuse_object" records the allocation of active objects
-// - "inuse_bytes" records the bytes used by active objects
+// - "alloc_objects" records the locations where objects are allocated
+// - "alloc_space"   records the locations where bytes are allocated
+// - "inuse_objects" records the allocation of active objects
+// - "inuse_space"   records the bytes used by active objects
 //
-// "alloc_object" and "alloc_bytes" are all time counters since the start of
-// the program, while "inuse_object" and "inuse_bytes" capture the current state
+// "alloc_objects" and "alloc_space" are all time counters since the start of
+// the program, while "inuse_objects" and "inuse_space" capture the current state
 // of the program at the time the profile is taken.
 type MemoryProfiler struct {
 	mutex sync.Mutex
@@ -76,9 +76,9 @@ func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *pro
 	return buildProfile(sampleRate, symbols, p.snapshot(), p.epoch, p.time(),
 		[]*profile.ValueType{
 			{Type: "alloc_space", Unit: "byte"},
-			{Type: "alloc_object", Unit: "count"},
+			{Type: "alloc_objects", Unit: "count"},
 			{Type: "inuse_space", Unit: "byte"},
-			{Type: "inuse_object", Unit: "count"},
+			{Type: "inuse_objects", Unit: "count"},
 		},
 	)
 }

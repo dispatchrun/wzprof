@@ -118,9 +118,11 @@ compiled first in order to build the list of symbols from the DWARF sections.
 ```
 wzprof -pprof-addr :8080 path/to/guest.wasm
 ```
-
 ```
-go tool pprof -http :3030 http://localhost:8080/guest/debug/pprof
+go tool pprof -http :3030 http://localhost:8080/debug/pprof/profile?seconds=5
+```
+```
+go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
 ```
 
 #### Run program to completion with CPU or memory profiling

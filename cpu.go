@@ -171,7 +171,7 @@ func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.Functio
 	var frame cpuTimeFrame
 	p.mutex.Lock()
 
-	if p.counts != nil && (p.host || def.GoFunction() == nil) {
+	if p.counts != nil {
 		start := p.now()
 		trace := stackTrace{}
 
@@ -200,7 +200,9 @@ func (p cpuListener) After(ctx context.Context, mod api.Module, def api.Function
 	p.frames = p.frames[:i]
 
 	if f.start != 0 {
-		p.counts.observe(f.trace, p.now()-f.start)
+		if p.counts != nil {
+			p.counts.observe(f.trace, p.now()-f.start)
+		}
 		p.traces = append(p.traces, f.trace)
 	}
 
