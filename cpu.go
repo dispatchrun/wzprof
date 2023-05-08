@@ -71,7 +71,7 @@ type cpuTimeFrame struct {
 // given time function to record the CPU time consumed.
 func NewCPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
 	p := &CPUProfiler{
-		time: walltime,
+		time: nanotime,
 	}
 	for _, opt := range options {
 		opt(p)

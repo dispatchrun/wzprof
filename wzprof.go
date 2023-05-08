@@ -15,8 +15,8 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-//go:linkname walltime runtime.walltime
-func walltime() int64
+//go:linkname nanotime runtime.nanotime
+func nanotime() int64
 
 // WriteProfile writes a profile to a file at the given path.
 func WriteProfile(path string, prof *profile.Profile) error {
