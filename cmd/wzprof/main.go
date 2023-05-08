@@ -29,10 +29,11 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
-	"github.com/stealthrocket/wzprof"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
+
+	"github.com/stealthrocket/wzprof"
 )
 
 func main() {
