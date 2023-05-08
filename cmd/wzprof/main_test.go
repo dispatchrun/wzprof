@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -132,8 +131,6 @@ func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
 		}
 	}
 
-	// printSamples(p.Sample)
-
 	// TODO: pre-process samples to assess faster.
 expected:
 	for esi, expected := range expectedSamples {
@@ -181,6 +178,8 @@ type sample struct {
 	stack  []frame
 }
 
+/*
+
 // printSamples outputs the samples list in a way that can be copy-pasted in the
 // tests above.
 //
@@ -199,3 +198,5 @@ func printSamples(samples []*profile.Sample) {
 		}
 	}
 }
+
+*/

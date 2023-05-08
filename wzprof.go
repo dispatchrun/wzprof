@@ -242,9 +242,7 @@ func (st stackTrace) String() string {
 	return sb.String()
 }
 
-var (
-	stackTraceHashSeed = maphash.MakeSeed()
-)
+var stackTraceHashSeed = maphash.MakeSeed()
 
 type sampleType interface {
 	sampleLocation() stackTrace
