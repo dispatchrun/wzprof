@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,7 +29,6 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
-	flag "github.com/spf13/pflag"
 	"github.com/stealthrocket/wzprof"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/experimental"
@@ -40,12 +40,8 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx); err != nil {
-		switch err {
-		case context.Canceled:
-		default:
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
@@ -150,7 +146,14 @@ func (prog *program) run(ctx context.Context) error {
 	}()
 
 	<-ctx.Done()
-	return context.Cause(ctx)
+	return silenceContextCanceled(context.Cause(ctx))
+}
+
+func silenceContextCanceled(err error) error {
+	if err == context.Canceled {
+		err = nil
+	}
+	return err
 }
 
 var (
@@ -159,7 +162,7 @@ var (
 	memProfile string
 	sampleRate float64
 	hostTime   bool
-	mounts     []string
+	mounts     string
 )
 
 func init() {
@@ -167,9 +170,9 @@ func init() {
 	flag.StringVar(&pprofAddr, "pprof-addr", "", "Address where to expose a pprof HTTP endpoint.")
 	flag.StringVar(&cpuProfile, "cpuprofile", "", "Write a CPU profile to the specified file before exiting.")
 	flag.StringVar(&memProfile, "memprofile", "", "Write a memory profile to the specified file before exiting.")
-	flag.Float64Var(&sampleRate, "sampling", defaultSampleRate, "Set the profile sampling rate (0-1).")
-	flag.BoolVar(&hostTime, "cpuhost", false, "Include time spent in host function calls.")
-	flag.StringSliceVar(&mounts, "mount", nil, "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
+	flag.Float64Var(&sampleRate, "sample-rate", defaultSampleRate, "Set the profile sampling rate (0-1).")
+	flag.BoolVar(&hostTime, "enable-host-time", false, "Include time spent in host function calls.")
+	flag.StringVar(&mounts, "mount", "", "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
 }
 
 func run(ctx context.Context) error {
@@ -187,8 +190,15 @@ func run(ctx context.Context) error {
 		memProfile: memProfile,
 		sampleRate: sampleRate,
 		hostTime:   hostTime,
-		mounts:     mounts,
+		mounts:     split(mounts),
 	}).run(ctx)
+}
+
+func split(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
 }
 
 func writeProfile(path string, prof *profile.Profile) {
