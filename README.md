@@ -1,4 +1,4 @@
-[![Build](https://github.com/stealthrocket/wzprof/actions/workflows/go.yml/badge.svg)](https://github.com/stealthrocket/wzprof/actions/workflows/go.yml)
+[![Build](https://github.com/stealthrocket/wzprof/actions/workflows/go-test.yml/badge.svg)](https://github.com/stealthrocket/wzprof/actions/workflows/go-test.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/stealthrocket/wzprof.svg)](https://pkg.go.dev/github.com/stealthrocket/wzprof)
 [![Apache 2 License](https://img.shields.io/badge/license-Apache%202-blue.svg)](LICENSE)
 
