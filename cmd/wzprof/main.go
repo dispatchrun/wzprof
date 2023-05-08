@@ -98,6 +98,7 @@ func (prog *program) run(ctx context.Context) error {
 		pprof := http.NewServeMux()
 		pprof.Handle("/debug/pprof/profile", cpu.NewHandler(prog.sampleRate, symbols))
 		pprof.Handle("/debug/pprof/heap", mem.NewHandler(prog.sampleRate, symbols))
+		pprof.Handle("/wzprof", http.DefaultServeMux)
 
 		go func() {
 			if err := http.ListenAndServe(prog.pprofAddr, pprof); err != nil {
