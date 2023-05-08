@@ -37,25 +37,14 @@ func TestSampledFunctionListener(t *testing.T) {
 }
 
 func BenchmarkSampledFunctionListener(b *testing.B) {
-	module := wazerotest.NewModule(nil,
-		wazerotest.NewFunction(func(ctx context.Context, mod api.Module) {}),
-	)
-
-	stack := []wazerotest.StackFrame{
-		{Function: module.Function(0)},
-	}
-
-	function := func(ctx context.Context, mod api.Module, def api.FunctionDefinition, paramValues []uint64, stackIterator experimental.StackIterator) {
-		//
-	}
-
-	factory := SampledFunctionListenerFactory(0.1, experimental.FunctionListenerFactoryFunc(
-		func(def api.FunctionDefinition) experimental.FunctionListener {
-			return experimental.FunctionListenerFunc(function)
-		},
-	))
-
-	wazerotest.BenchmarkFunctionListener(b, module, stack,
-		factory.NewListener(module.Function(0).Definition()),
+	benchmarkFunctionListener(b,
+		SampledFunctionListenerFactory(0.1, experimental.FunctionListenerFactoryFunc(
+			func(def api.FunctionDefinition) experimental.FunctionListener {
+				return experimental.FunctionListenerFunc(
+					func(ctx context.Context, mod api.Module, def api.FunctionDefinition, paramValues []uint64, stackIterator experimental.StackIterator) {
+					},
+				)
+			},
+		)),
 	)
 }

@@ -42,8 +42,7 @@ type MemoryProfiler struct {
 	mutex sync.Mutex
 	alloc stackCounterMap
 	inuse map[uint32]memoryAllocation
-	time  func() time.Time
-	epoch time.Time
+	start time.Time
 }
 
 // MemoryProfilerOption is a type used to represent configuration options for
@@ -57,12 +56,11 @@ type memoryAllocation struct {
 
 // NewMemoryProfiler constructs a new instance of MemoryProfiler using the given
 // time function to record the profile execution time.
-func NewMemoryProfiler(time func() time.Time, opts ...MemoryProfilerOption) *MemoryProfiler {
+func NewMemoryProfiler(opts ...MemoryProfilerOption) *MemoryProfiler {
 	p := &MemoryProfiler{
 		alloc: make(stackCounterMap),
 		inuse: make(map[uint32]memoryAllocation),
-		time:  time,
-		epoch: time(),
+		start: time.Now(),
 	}
 	for _, opt := range opts {
 		opt(p)
@@ -73,7 +71,7 @@ func NewMemoryProfiler(time func() time.Time, opts ...MemoryProfilerOption) *Mem
 // NewProfile takes a snapshot of the current memory allocation state and builds
 // a profile representing the state of the program memory.
 func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
-	return buildProfile(sampleRate, symbols, p.snapshot(), p.epoch, p.time(),
+	return buildProfile(sampleRate, symbols, p.snapshot(), p.start, time.Since(p.start),
 		[]*profile.ValueType{
 			{Type: "alloc_space", Unit: "byte"},
 			{Type: "alloc_objects", Unit: "count"},
