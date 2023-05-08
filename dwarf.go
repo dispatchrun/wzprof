@@ -35,11 +35,6 @@ func BuildDwarfSymbolizer(module wazero.CompiledModule) (Symbolizer, error) {
 
 type pcrange = [2]uint64
 
-type entryatrange struct {
-	Range pcrange
-	Entry *dwarf.Entry
-}
-
 type subprogram struct {
 	Entry     *dwarf.Entry
 	CU        *dwarf.Entry
@@ -261,7 +256,6 @@ func (d *dwarfmapper) LocationsForPC(pc uint64) []Location {
 			break
 		}
 		lines = append(lines, line{Pos: pos, Address: le.Address})
-
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i].Address < lines[j].Address })
 
@@ -376,7 +370,7 @@ func (d *dwarfmapper) namesForSubprogram(e *dwarf.Entry, spgm *subprogram) (stri
 	var ns string
 	if spgm != nil {
 		ns = spgm.Namespace
-	} else {
+		// } else {
 		//		panic("spgm not found")
 	}
 
