@@ -54,7 +54,7 @@ go get github.com/stealthrocket/wzprof@latest
 
 The profiler is propagated to the Wazero runtime through its context:
 
-```
+```go
 sampleRate := 1.0
 
 cpu := wzprof.NewCPUProfiler(time.Now)
