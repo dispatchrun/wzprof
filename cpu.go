@@ -202,24 +202,22 @@ func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.Functio
 		}
 	}
 
-	p.frames = append(p.frames, frame)
 	p.mutex.Unlock()
+	p.frames = append(p.frames, frame)
 	return ctx
 }
 
 func (p cpuListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
-	p.mutex.Lock()
-
 	i := len(p.frames) - 1
 	f := p.frames[i]
 	p.frames = p.frames[:i]
 
 	if f.start != 0 {
+		p.mutex.Lock()
 		if p.counts != nil {
 			p.counts.observe(f.trace, p.time()-f.start)
 		}
+		p.mutex.Unlock()
 		p.traces = append(p.traces, f.trace)
 	}
-
-	p.mutex.Unlock()
 }
