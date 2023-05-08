@@ -23,8 +23,15 @@ import (
 	"math"
 	"sort"
 
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 )
+
+// BuildDwarfSymbolizer constructs a Symbolizer instance from the DWARF sections
+// of the given WebAssembly module.
+func BuildDwarfSymbolizer(module wazero.CompiledModule) (Symbolizer, error) {
+	return newDwarfmapper(module.CustomSections())
+}
 
 type pcrange = [2]uint64
 
@@ -50,7 +57,7 @@ type dwarfmapper struct {
 	subprograms []subprogramRange
 }
 
-func newDwarfmapper(sections []api.CustomSection) (mapper, error) {
+func newDwarfmapper(sections []api.CustomSection) (*dwarfmapper, error) {
 	var info, line, ranges, str, abbrev []byte
 
 	for _, section := range sections {
@@ -218,11 +225,7 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 	}
 }
 
-// Lookup returns a list of function locations for a given program
-// counter, starting from current function followed by the inlined
-// functions, in order of inlining. Result if empty if the pc cannot
-// be resolved in the dwarf data.
-func (d *dwarfmapper) Lookup(pc uint64) []location {
+func (d *dwarfmapper) LocationsForPC(pc uint64) []Location {
 	// TODO: replace with binary search
 
 	var spgm *subprogram
@@ -293,8 +296,8 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 	}
 
 	human, stable := d.namesForSubprogram(spgm.Entry, spgm)
-	locations := make([]location, 0, 1+len(spgm.Inlines))
-	locations = append(locations, location{
+	locations := make([]Location, 0, 1+len(spgm.Inlines))
+	locations = append(locations, Location{
 		File:       le.File.Name,
 		Line:       int64(le.Line),
 		Column:     int64(le.Column),
@@ -317,7 +320,7 @@ func (d *dwarfmapper) Lookup(pc uint64) []location {
 			line, _ := f.Val(dwarf.AttrCallLine).(int64)
 			col, _ := f.Val(dwarf.AttrCallLine).(int64)
 			human, stable := d.namesForSubprogram(f, nil)
-			locations = append(locations, location{
+			locations = append(locations, Location{
 				File:       file.Name,
 				Line:       line,
 				Column:     col,

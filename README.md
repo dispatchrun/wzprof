@@ -55,36 +55,86 @@ go get github.com/stealthrocket/wzprof@latest
 The profiler is propagated to the Wazero runtime through its context:
 
 ```
-ctx := context.Background()
+sampleRate := 1.0
 
-profiler := wzprof.NewProfileListener(
-    wzprof.NewProfilerMemory(),
-    wzprof.NewProfilerCPU(0.2),
-    wzprof.NewProfilerCPUTime(0.2),
+cpu := wzprof.NewCPUProfiler(time.Now)
+mem := wzprof.NewMemoryProfiler(time.Now)
+
+ctx := context.WithValue(context.Background(),
+	experimental.FunctionListenerFactoryKey{},
+	experimental.MultiFunctionListenerFactory(
+        wzprof.SampledFunctionListenerFactory(sampleRate, cpu),
+        wzprof.SampledFunctionListenerFactory(sampleRate, mem),
+    ),
 )
 
-ctx = profiler.Register(ctx)
+runtime := wazero.NewRuntime(ctx)
+defer runtime.Close(ctx)
 
-runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigCompiler())
+compiledModule, err := runtime.CompileModule(ctx, wasmCode)
+if err != nil {
+	log.Fatal("compiling wasm module:", err)
+}
+
+symbols, err := wzprof.BuildDwarfSymbolizer(compiledModule)
+if err != nil {
+	log.Fatal("symbolizing wasm module:", err)
+}
+
+// The CPU profiler collects records of module execution between two time
+// points, the program drives where the profiler is active by calling
+// StartProfile/StopProfile.
+cpu.StartProfile()
+
+moduleInstance, err := runtime.InstantiateModule(ctx, compiledModule,
+	wazero.NewModuleConfig(),
+)
+if err != nil {
+	log.Fatal("instantiating wasm module:", err)
+}
+if err := moduleInstance.Close(ctx); err != nil {
+    log.Fatal("closing wasm module:", err)
+}
+
+cpuProfile := cpu.StopProfile(sampleRate, symbols)
+memProfile := mem.NewProfile(sampleRate, symbols)
+
+if err := wzprof.WriteProfile("cpu.pprof", cpuProfile); err != nil {
+    log.Fatal("writing CPU profile:", err)
+}
+if err := wzprof.WriteProfile("mem.pprof", memProfile); err != nil {
+    log.Fatal("writing memory profile:", err)
+}
 ```
 
-### Examples
+Note that the program must spearate the compilation and instantiation of
+WebAssembly modules in order to use the profilers, because the module must be
+compiled first in order to build the list of symbols from the DWARF sections.
 
+### Examples
 
 #### Connect to running pprof server
 
 ```
-wzprof --pprof-addr=:8080 path/to/guest.wasm
+wzprof -pprof-addr :8080 path/to/guest.wasm
+```
+```
+go tool pprof -http :3030 http://localhost:8080/debug/pprof/profile?seconds=5
+```
+```
+go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
 ```
 
-```
-go tool pprof -http=:3030 http://localhost:8080/guest/debug/pprof
-```
-
-#### Run program to completion with profiling
+#### Run program to completion with CPU or memory profiling
 
 ```
-wzprof --pprof-file=profile.pb.gz path/to/guest.wasm
+wzprof -cpuprofile /tmp/profile path/to/guest.wasm
+```
+```
+wzprof -memprofile /tmp/profile path/to/guest.wasm
+```
+```
+go tool pprof -http :4000 /tmp/profile
 ```
 
 ## Profilers
@@ -106,7 +156,7 @@ Feel free to open a pull request to support more memory-allocating functions!
 `wzprof` has two CPU profilers: CPU samples and CPU time.
 
 The CPU samples profiler gives a repesentation of the guest execution by counting
-the number of time it seen an unique stack trace.
+the number of time it sees a unique stack trace.
 
 The CPU time profiler measures the actual time spent on-CPU without taking into
 account the off-CPU time (e.g waiting for I/O). For this profiler, all the

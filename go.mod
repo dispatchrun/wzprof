@@ -5,8 +5,7 @@ go 1.20
 require (
 	github.com/google/pprof v0.0.0-20230406165453-00490a63f317
 	github.com/tetratelabs/wazero v1.0.3
+	golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53
 )
 
-require github.com/spf13/pflag v1.0.5
-
-replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230503192533-6860dd7061a1
+replace github.com/tetratelabs/wazero => github.com/stealthrocket/wazero v0.0.0-20230506195512-778fba8a2815

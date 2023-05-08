@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/pprof/profile"
@@ -16,9 +17,9 @@ import (
 // that.
 
 func TestDataCSimple(t *testing.T) {
-	expectedSamples := []sample{
+	testMemoryProfiler(t, "../../testdata/c/simple.wasm", []sample{
 		{
-			[]int64{1, 10},
+			[]int64{10, 1},
 			[]frame{
 				{"malloc", 0, false},
 				{"func1", 6, false},
@@ -28,7 +29,7 @@ func TestDataCSimple(t *testing.T) {
 			},
 		},
 		{
-			[]int64{1, 20},
+			[]int64{20, 1},
 			[]frame{
 				{"malloc", 0, false},
 				{"func21", 12, false},
@@ -39,7 +40,7 @@ func TestDataCSimple(t *testing.T) {
 			},
 		},
 		{
-			[]int64{1, 30},
+			[]int64{30, 1},
 			[]frame{
 				{"malloc", 0, false},
 				{"func31", 29, true},
@@ -49,21 +50,13 @@ func TestDataCSimple(t *testing.T) {
 				{"_start", 0, false},
 			},
 		},
-	}
-
-	prog := program{
-		WasmPath:    "../../testdata/c/simple.wasm",
-		CPUSampling: 1.0,
-		Profilers:   "cpu,mem",
-	}
-
-	testFullProfile(t, expectedSamples, prog)
+	})
 }
 
 func TestDataRustSimple(t *testing.T) {
-	expectedSamples := []sample{
+	testMemoryProfiler(t, "../../testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm", []sample{
 		{
-			[]int64{1, 120},
+			[]int64{120, 1},
 			[]frame{
 				{"malloc", 0, false},                                                                        // malloc
 				{"std:sys:wasi:alloc:{impl#0}:alloc", 381, true},                                            // _ZN3std3sys4wasi5alloc81_$LT$impl$u20$core..alloc..global..GlobalAlloc$u20$for$u20$std..alloc..System$GT$5alloc17hf06d843ee28c936eE
@@ -94,41 +87,40 @@ func TestDataRustSimple(t *testing.T) {
 				{"_start", 0, false},                                                                        // _start
 			},
 		},
-	}
-
-	prog := program{
-		WasmPath:    "../../testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm",
-		CPUSampling: 1.0,
-		Profilers:   "cpu,mem",
-	}
-
-	testFullProfile(t, expectedSamples, prog)
+	})
 }
 
-func testFullProfile(t *testing.T, expectedSamples []sample, prog program) {
-	profilePath := t.TempDir() + "/profile.pb.gz"
-	prog.File = profilePath
-	err := prog.Execute(context.Background())
-	if err != nil {
-		t.Fatal("unexpected error:", err)
+func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
+	prog := &program{
+		filePath:   path,
+		sampleRate: 1,
+		memProfile: filepath.Join(t.TempDir(), "mem.pprof"),
 	}
 
-	f, err := os.Open(profilePath)
+	err := prog.run(context.Background())
 	if err != nil {
-		t.Fatalf("can't open profile file %s: %s", profilePath, err)
+		t.Fatal(err)
+	}
+
+	f, err := os.Open(prog.memProfile)
+	if err != nil {
+		t.Fatalf("can't open profile file %s: %s", prog.memProfile, err)
 	}
 	defer f.Close()
 	p, err := profile.Parse(f)
 	if err != nil {
 		t.Fatalf("error parsing profile: %s", err)
 	}
-
-	err = p.CheckValid()
-	if err != nil {
-		t.Errorf("invalid profile: %s", err)
+	if err := p.CheckValid(); err != nil {
+		t.Fatalf("invalid profile: %s", err)
 	}
 
-	expectedTypes := []string{"cpu_samples", "alloc_space"}
+	expectedTypes := []string{
+		"alloc_space",
+		"alloc_objects",
+		"inuse_space",
+		"inuse_objects",
+	}
 
 	if len(p.SampleType) != len(expectedTypes) {
 		t.Errorf("expected %d sample types; got %d", len(expectedTypes), len(p.SampleType))
@@ -140,7 +132,7 @@ func testFullProfile(t *testing.T, expectedSamples []sample, prog program) {
 		}
 	}
 
-	//	printSamples(p.Sample)
+	// printSamples(p.Sample)
 
 	// TODO: pre-process samples to assess faster.
 expected:
@@ -165,6 +157,7 @@ expected:
 				}
 			}
 			if len(stack) == 0 {
+				// TODO: test "inuse_*" samples
 				for i, e := range expected.values {
 					if e != actual.Value[i] {
 						t.Errorf("expected sample matched %d, but value %d was %d; expected %d", si, i, actual.Value[i], e)

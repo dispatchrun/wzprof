@@ -15,109 +15,277 @@
 package wzprof
 
 import (
+	"context"
 	"encoding/binary"
-	"fmt"
+	"net/http"
+	"sync"
+	"time"
 
 	"github.com/google/pprof/profile"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 )
 
-// ProfilerMemory instruments known allocator functions for memory
-// allocations (alloc_space).
-type ProfilerMemory struct{}
-
-type profileStack0int32 struct{}
-
-func (p profileStack0int32) Before(mod api.Module, params []uint64) int64 {
-	return int64(int32(params[0]))
-}
-func (p profileStack0int32) After(in int64, results []uint64) int64 {
-	return in
-}
-
-type profileStackCalloc struct{}
-
-func (p profileStackCalloc) Before(mod api.Module, params []uint64) int64 {
-	return int64(int32(params[0])) * int64(int32(params[1]))
-}
-
-func (profileStackCalloc) After(in int64, results []uint64) int64 {
-	return in
+// MemoryProfiler is the implementation of a performance profiler recording
+// samples of memory allocation and utilization.
+//
+// The profiler generates the following samples:
+// - "alloc_objects" records the locations where objects are allocated
+// - "alloc_space"   records the locations where bytes are allocated
+// - "inuse_objects" records the allocation of active objects
+// - "inuse_space"   records the bytes used by active objects
+//
+// "alloc_objects" and "alloc_space" are all time counters since the start of
+// the program, while "inuse_objects" and "inuse_space" capture the current state
+// of the program at the time the profile is taken.
+type MemoryProfiler struct {
+	mutex sync.Mutex
+	alloc stackCounterMap
+	inuse map[uint32]memoryAllocation
+	time  func() time.Time
+	epoch time.Time
 }
 
-type profileStack1int32 struct{}
+// MemoryProfilerOption is a type used to represent configuration options for
+// MemoryProfiler instances created by NewMemoryProfiler.
+type MemoryProfilerOption func(*MemoryProfiler)
 
-func (p profileStack1int32) Before(mod api.Module, params []uint64) int64 {
-	return int64(int32(params[1]))
+type memoryAllocation struct {
+	*stackCounter
+	size uint32
 }
 
-func (p profileStack1int32) After(in int64, results []uint64) int64 {
-	return in
+// NewMemoryProfiler constructs a new instance of MemoryProfiler using the given
+// time function to record the profile execution time.
+func NewMemoryProfiler(time func() time.Time, opts ...MemoryProfilerOption) *MemoryProfiler {
+	p := &MemoryProfiler{
+		alloc: make(stackCounterMap),
+		inuse: make(map[uint32]memoryAllocation),
+		time:  time,
+		epoch: time(),
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
-type profileGoStack0int32 struct{}
+// NewProfile takes a snapshot of the current memory allocation state and builds
+// a profile representing the state of the program memory.
+func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
+	return buildProfile(sampleRate, symbols, p.snapshot(), p.epoch, p.time(),
+		[]*profile.ValueType{
+			{Type: "alloc_space", Unit: "byte"},
+			{Type: "alloc_objects", Unit: "count"},
+			{Type: "inuse_space", Unit: "byte"},
+			{Type: "inuse_objects", Unit: "count"},
+		},
+	)
+}
 
-func (p profileGoStack0int32) Before(mod api.Module, params []uint64) int64 {
+type memorySample struct {
+	stack stackTrace
+	value [4]int64 // allocBytes, allocCount, inuseBytes, inuseCount
+}
+
+func (m *memorySample) sampleLocation() stackTrace {
+	return m.stack
+}
+
+func (m *memorySample) sampleValue() []int64 {
+	return m.value[:]
+}
+
+func (p *MemoryProfiler) snapshot() map[uint64]*memorySample {
+	// We hold an exclusive lock while getting a snapshot of the profiler state.
+	// This will block concurrent calls to malloc/free/etc... We accept the cost
+	// since it only happens when the memory profile is captured, and memory
+	// allocation is generally accepted as being a potentially costly operation.
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	samples := make(map[uint64]*memorySample, len(p.alloc))
+
+	for _, alloc := range p.alloc {
+		p := samples[alloc.stack.key]
+		if p == nil {
+			p = &memorySample{stack: alloc.stack}
+			samples[alloc.stack.key] = p
+		}
+		p.value[0] += alloc.total()
+		p.value[1] += alloc.count()
+	}
+
+	for _, inuse := range p.inuse {
+		p := samples[inuse.stack.key]
+		p.value[2] += int64(inuse.size)
+		p.value[3] += 1
+	}
+
+	return samples
+}
+
+// NewHandler returns a http handler allowing the profiler to be exposed on a
+// pprof-compatible http endpoint.
+//
+// The sample rate is a value between 0 and 1 used to scale the profile results
+// based on the sampling rate applied to the profiler so the resulting values
+// remain representative.
+//
+// The symbolizer passed as argument is used to resolve names of program
+// locations recorded in the profile.
+func (p *MemoryProfiler) NewHandler(sampleRate float64, symbols Symbolizer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serveProfile(w, p.NewProfile(sampleRate, symbols))
+	})
+}
+
+// NewListener returns a function listener suited to install a hook on functions
+// responsible for memory allocation.
+//
+// The listener recognizes multiple memory alloction functions used by compilers
+// and libraries. It uses the function name to detect memory allocators,
+// currently supporting libc, Go, and TinyGo.
+func (p *MemoryProfiler) NewListener(def api.FunctionDefinition) experimental.FunctionListener {
+	switch def.Name() {
+	// C standard library, Rust
+	case "malloc":
+		return &mallocProfiler{memory: p}
+	case "calloc":
+		return &callocProfiler{memory: p}
+	case "realloc":
+		return &reallocProfiler{memory: p}
+	case "free":
+		return &freeProfiler{memory: p}
+
+	// Go
+	case "runtime.mallocgc":
+		return &goRuntimeMallocgcProfiler{memory: p}
+
+	// TinyGo
+	case "runtime.alloc":
+		return &mallocProfiler{memory: p}
+
+	default:
+		return nil
+	}
+}
+
+func (p *MemoryProfiler) observeAlloc(addr, size uint32, stack stackTrace) {
+	p.mutex.Lock()
+	alloc := p.alloc.lookup(stack)
+	alloc.observe(int64(size))
+	p.inuse[addr] = memoryAllocation{alloc, size}
+	p.mutex.Unlock()
+}
+
+func (p *MemoryProfiler) observeFree(addr uint32) {
+	p.mutex.Lock()
+	delete(p.inuse, addr)
+	p.mutex.Unlock()
+}
+
+type mallocProfiler struct {
+	memory *MemoryProfiler
+	size   uint32
+	stack  stackTrace
+}
+
+func (p *mallocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+	p.size = api.DecodeU32(params[0])
+	p.stack = makeStackTrace(p.stack, si)
+	return ctx
+}
+
+func (p *mallocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+	if err == nil {
+		p.memory.observeAlloc(api.DecodeU32(results[0]), p.size, p.stack)
+	}
+}
+
+type callocProfiler struct {
+	memory *MemoryProfiler
+	count  uint32
+	size   uint32
+	stack  stackTrace
+}
+
+func (p *callocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+	p.count = api.DecodeU32(params[0])
+	p.size = api.DecodeU32(params[1])
+	p.stack = makeStackTrace(p.stack, si)
+	return ctx
+}
+
+func (p *callocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+	if err == nil {
+		p.memory.observeAlloc(api.DecodeU32(results[0]), p.count*p.size, p.stack)
+	}
+}
+
+type reallocProfiler struct {
+	memory *MemoryProfiler
+	addr   uint32
+	size   uint32
+	stack  stackTrace
+}
+
+func (p *reallocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+	p.addr = api.DecodeU32(params[0])
+	p.size = api.DecodeU32(params[1])
+	p.stack = makeStackTrace(p.stack, si)
+	return ctx
+}
+
+func (p *reallocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+	if err == nil {
+		p.memory.observeFree(p.addr)
+		p.memory.observeAlloc(api.DecodeU32(results[0]), p.size, p.stack)
+	}
+}
+
+type freeProfiler struct {
+	memory *MemoryProfiler
+	addr   uint32
+}
+
+func (p *freeProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+	p.addr = api.DecodeU32(params[0])
+	return ctx
+}
+
+func (p *freeProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+	if err == nil {
+		p.memory.observeFree(p.addr)
+	}
+}
+
+type goRuntimeMallocgcProfiler struct {
+	memory *MemoryProfiler
+	size   uint32
+	stack  stackTrace
+}
+
+func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
 	imod := mod.(experimental.InternalModule)
 	mem := imod.Memory()
 
 	sp := int32(imod.Global(0).Get())
 	offset := sp + 8*(int32(0)+1) // +1 for the return address
 	b, ok := mem.Read(uint32(offset), 8)
-	if !ok {
-		panic(fmt.Sprintf("could not read go stack entry at offset %d", offset))
+	if ok {
+		p.size = binary.LittleEndian.Uint32(b)
+		p.stack = makeStackTrace(p.stack, si)
+	} else {
+		p.size = 0
 	}
-	v := binary.LittleEndian.Uint64(b)
-	return int64(v)
+	return ctx
 }
 
-func (p profileGoStack0int32) After(in int64, results []uint64) int64 {
-	return in
-}
-
-func (p *ProfilerMemory) Register() map[string]ProfileProcessor {
-	return map[string]ProfileProcessor{
-		"profileStack0int32":   profileStack0int32{},
-		"profileStack1int32":   profileStack1int32{},
-		"profileStackCalloc":   profileStackCalloc{},
-		"profileGoStack0int32": profileGoStack0int32{},
+func (p *goRuntimeMallocgcProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+	if err == nil && p.size != 0 {
+		// TODO: get the returned pointer
+		addr := uint32(0)
+		p.memory.observeAlloc(addr, p.size, p.stack)
 	}
 }
-
-func (p *ProfilerMemory) Listen(name string) string {
-	switch name {
-	// C standard library, Rust
-	case "malloc":
-		return "profileStack0int32"
-	case "calloc":
-		return "profileStackCalloc"
-	case "realloc":
-		return "profileStack1int32"
-
-	// Go
-	case "runtime.mallocgc":
-		return "profileGoStack0int32"
-
-	// TinyGo
-	case "runtime.alloc":
-		return "profileStack0int32"
-
-	default:
-		return ""
-	}
-}
-
-func (p *ProfilerMemory) SampleType() *profile.ValueType {
-	return &profile.ValueType{Type: "alloc_space", Unit: "bytes"}
-}
-
-func (p *ProfilerMemory) Sampler() Sampler {
-	return newAlwaysSampler()
-}
-
-func (p *ProfilerMemory) PostProcess(prof *profile.Profile, idx int, offLocations []*profile.Location) {
-	// no post process for this profiler
-}
-
-var _ Profiler = &ProfilerMemory{}
