@@ -377,7 +377,6 @@ func (d *dwarfmapper) namesForSubprogram(e *dwarf.Entry, spgm *subprogram) (stri
 	if spgm != nil {
 		ns = spgm.Namespace
 	} else {
-
 		//		panic("spgm not found")
 	}
 
