@@ -183,7 +183,7 @@ func init() {
 	flag.StringVar(&memProfile, "memprofile", "", "Write a memory profile to the specified file before exiting.")
 	flag.Float64Var(&sampleRate, "sample", defaultSampleRate, "Set the profile sampling rate (0-1).")
 	flag.BoolVar(&hostProfile, "host", false, "Generate profiles of the host instead of the guest application.")
-	flag.BoolVar(&hostTime, "hosttime", false, "Include time spent in host function calls in guest CPU profile.")
+	flag.BoolVar(&hostTime, "iowait", false, "Include time spent waiting on I/O in guest CPU profile.")
 	flag.StringVar(&mounts, "mount", "", "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
 }
 
