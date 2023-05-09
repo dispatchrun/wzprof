@@ -6,10 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"strings"
 
@@ -203,6 +205,10 @@ func run(ctx context.Context) error {
 		// TODO: print flag usage
 		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
 	}
+
+	rate := int(math.Ceil(1 / sampleRate))
+	runtime.SetBlockProfileRate(rate)
+	runtime.SetMutexProfileFraction(rate)
 
 	return (&program{
 		filePath:    args[0],
