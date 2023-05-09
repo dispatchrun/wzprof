@@ -24,7 +24,7 @@ func TestSampledFunctionListener(t *testing.T) {
 	))
 
 	function := module.Function(0).Definition()
-	listener := factory.NewListener(function)
+	listener := factory.NewFunctionListener(function)
 
 	for i := 0; i < 20; i++ {
 		ctx := listener.Before(context.Background(), module, function, nil, nil)

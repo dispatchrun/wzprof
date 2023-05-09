@@ -27,7 +27,7 @@ func Sample(sampleRate float64, factory experimental.FunctionListenerFactory) ex
 	sampler.cycle = uint64(math.Ceil(1 / sampleRate))
 	sampler.count = sampler.cycle
 	return experimental.FunctionListenerFactoryFunc(func(def api.FunctionDefinition) experimental.FunctionListener {
-		lstn := factory.NewListener(def)
+		lstn := factory.NewFunctionListener(def)
 		if lstn == nil {
 			return nil
 		}
@@ -40,7 +40,7 @@ func Sample(sampleRate float64, factory experimental.FunctionListenerFactory) ex
 
 type emptyFunctionListenerFactory struct{}
 
-func (emptyFunctionListenerFactory) NewListener(api.FunctionDefinition) experimental.FunctionListener {
+func (emptyFunctionListenerFactory) NewFunctionListener(api.FunctionDefinition) experimental.FunctionListener {
 	return nil
 }
 

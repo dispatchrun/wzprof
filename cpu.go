@@ -160,9 +160,9 @@ func (p *CPUProfiler) NewHandler(sampleRate float64, symbols Symbolizer) http.Ha
 	})
 }
 
-// NewListener returns a function listener suited to record CPU timings of
-// calls to the function passed as argument.
-func (p *CPUProfiler) NewListener(def api.FunctionDefinition) experimental.FunctionListener {
+// NewFunctionListener returns a function listener suited to record CPU timings
+// of calls to the function passed as argument.
+func (p *CPUProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
 	return cpuListener{p}
 }
 
