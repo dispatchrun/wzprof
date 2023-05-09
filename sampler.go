@@ -8,16 +8,15 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
-// SampledFunctionListenerFactory returns a function listener factory which
-// creates listeners where calls to their Before/After methods is sampled
-// at the given sample rate.
+// Sample returns a function listener factory which creates listeners where
+// calls to their Before/After methods is sampled at the given sample rate.
 //
 // Giving a zero or negative sampling rate disables the function listeners
 // entirely.
 //
 // Giving a sampling rate of one or more disables sampling, function listeners
 // are invoked for all function calls.
-func SampledFunctionListenerFactory(sampleRate float64, factory experimental.FunctionListenerFactory) experimental.FunctionListenerFactory {
+func Sample(sampleRate float64, factory experimental.FunctionListenerFactory) experimental.FunctionListenerFactory {
 	if sampleRate <= 0 {
 		return emptyFunctionListenerFactory{}
 	}

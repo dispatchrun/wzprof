@@ -55,10 +55,13 @@ func (prog *program) run(ctx context.Context) error {
 
 	var listeners []experimental.FunctionListenerFactory
 	if prog.cpuProfile != "" || prog.pprofAddr != "" {
-		listeners = append(listeners, wzprof.SampledFunctionListenerFactory(prog.sampleRate, cpu))
+		listeners = append(listeners, cpu)
 	}
 	if prog.memProfile != "" || prog.pprofAddr != "" {
-		listeners = append(listeners, wzprof.SampledFunctionListenerFactory(prog.sampleRate, mem))
+		listeners = append(listeners, mem)
+	}
+	for i, lstn := range listeners {
+		listeners[i] = wzprof.Sample(prog.sampleRate, lstn)
 	}
 
 	ctx = context.WithValue(ctx,

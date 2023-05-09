@@ -96,8 +96,8 @@ mem := wzprof.NewMemoryProfiler()
 ctx := context.WithValue(context.Background(),
 	experimental.FunctionListenerFactoryKey{},
 	experimental.MultiFunctionListenerFactory(
-		wzprof.SampledFunctionListenerFactory(sampleRate, cpu),
-		wzprof.SampledFunctionListenerFactory(sampleRate, mem),
+		wzprof.Sample(sampleRate, cpu),
+		wzprof.Sample(sampleRate, mem),
     ),
 )
 

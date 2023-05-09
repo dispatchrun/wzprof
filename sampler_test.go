@@ -17,7 +17,7 @@ func TestSampledFunctionListener(t *testing.T) {
 	n := 0
 	f := func(context.Context, api.Module, api.FunctionDefinition, []uint64, experimental.StackIterator) { n++ }
 
-	factory := SampledFunctionListenerFactory(0.1, experimental.FunctionListenerFactoryFunc(
+	factory := Sample(0.1, experimental.FunctionListenerFactoryFunc(
 		func(def api.FunctionDefinition) experimental.FunctionListener {
 			return experimental.FunctionListenerFunc(f)
 		},
@@ -38,7 +38,7 @@ func TestSampledFunctionListener(t *testing.T) {
 
 func BenchmarkSampledFunctionListener(b *testing.B) {
 	benchmarkFunctionListener(b,
-		SampledFunctionListenerFactory(0.1, experimental.FunctionListenerFactoryFunc(
+		Sample(0.1, experimental.FunctionListenerFactoryFunc(
 			func(def api.FunctionDefinition) experimental.FunctionListener {
 				return experimental.FunctionListenerFunc(
 					func(ctx context.Context, mod api.Module, def api.FunctionDefinition, paramValues []uint64, stackIterator experimental.StackIterator) {
