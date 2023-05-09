@@ -39,7 +39,7 @@ jobs:
           args: --timeout 5m
 
   spellcheck:
-    name: Spell Check with Typos
+    name: Spell Check
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Actions Repository
