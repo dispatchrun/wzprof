@@ -175,15 +175,18 @@ func silenceContextCanceled(err error) error {
 }
 
 var (
-	pprofAddr   string
-	cpuProfile  string
-	memProfile  string
-	sampleRate  float64
-	hostProfile bool
-	hostTime    bool
-	inuseMemory bool
-	mounts      string
+	pprofAddr    string
+	cpuProfile   string
+	memProfile   string
+	sampleRate   float64
+	hostProfile  bool
+	hostTime     bool
+	inuseMemory  bool
+	mounts       string
+	printVersion bool
 )
+
+var version = "dev"
 
 func init() {
 	log.Default().SetOutput(os.Stderr)
@@ -195,10 +198,16 @@ func init() {
 	flag.BoolVar(&hostTime, "iowait", false, "Include time spent waiting on I/O in guest CPU profile.")
 	flag.BoolVar(&inuseMemory, "inuse", false, "Include snapshots of memory in use (experimental).")
 	flag.StringVar(&mounts, "mount", "", "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
+	flag.BoolVar(&printVersion, "version", false, "Print the wzprof version.")
 }
 
 func run(ctx context.Context) error {
 	flag.Parse()
+
+	if printVersion {
+		fmt.Printf("wzprof version %s\n", version)
+		return nil
+	}
 
 	args := flag.Args()
 	if len(args) != 1 {
