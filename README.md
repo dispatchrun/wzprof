@@ -84,7 +84,8 @@ go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
 
 ## Profilers
 
-The profiler is propagated to the Wazero runtime through its context:
+The following code snippet demonstrates how to integrate the profilers to a
+Wazero runtime within a Go program:
 
 ```go
 sampleRate := 1.0
@@ -95,8 +96,8 @@ mem := wzprof.NewMemoryProfiler()
 ctx := context.WithValue(context.Background(),
 	experimental.FunctionListenerFactoryKey{},
 	experimental.MultiFunctionListenerFactory(
-        wzprof.SampledFunctionListenerFactory(sampleRate, cpu),
-        wzprof.SampledFunctionListenerFactory(sampleRate, mem),
+		wzprof.SampledFunctionListenerFactory(sampleRate, cpu),
+		wzprof.SampledFunctionListenerFactory(sampleRate, mem),
     ),
 )
 
