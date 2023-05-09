@@ -21,11 +21,11 @@ func benchmarkFunctionListener(b *testing.B, factory experimental.FunctionListen
 		malloc,
 	)
 
-	stack := []wazerotest.StackFrame{
+	stack := []experimental.StackFrame{
 		{Function: malloc, Params: []uint64{42}, Results: []uint64{0}},
 	}
 
-	wazerotest.BenchmarkFunctionListener(b, module, stack,
-		factory.NewListener(malloc.Definition()),
+	experimental.BenchmarkFunctionListener(b.N, module, stack,
+		factory.NewFunctionListener(malloc.Definition()),
 	)
 }
