@@ -1,0 +1,19 @@
+project_name: wzprof
+dist: ./goreleaser/dist
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/wzprof/main.go
+    binary: wzprof
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+    ldflags:
+      - -X main.version={{.Version}} 
+
+release:
+  github:
+    owner: stealthrocket
+    name: wzprof
