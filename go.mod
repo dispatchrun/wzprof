@@ -7,3 +7,5 @@ require (
 	github.com/tetratelabs/wazero v1.1.1-0.20230509090308-daad2fdb660d
 	golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53
 )
+
+replace github.com/tetratelabs/wazero => ../../tetratelabs/wazero

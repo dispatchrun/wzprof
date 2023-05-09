@@ -163,12 +163,12 @@ func (p *CPUProfiler) NewHandler(sampleRate float64, symbols Symbolizer) http.Ha
 // NewFunctionListener returns a function listener suited to record CPU timings
 // of calls to the function passed as argument.
 func (p *CPUProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
-	return cpuListener{p}
+	return cpuProfiler{p}
 }
 
-type cpuListener struct{ *CPUProfiler }
+type cpuProfiler struct{ *CPUProfiler }
 
-func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p cpuProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
 	var frame cpuTimeFrame
 	p.mutex.Lock()
 
@@ -193,7 +193,7 @@ func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.Functio
 	return ctx
 }
 
-func (p cpuListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+func (p cpuProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
 	i := len(p.frames) - 1
 	f := p.frames[i]
 	p.frames = p.frames[:i]
