@@ -18,7 +18,7 @@ import (
 func TestDataCSimple(t *testing.T) {
 	testMemoryProfiler(t, "../../testdata/c/simple.wasm", []sample{
 		{
-			[]int64{10, 1},
+			[]int64{1, 10},
 			[]frame{
 				{"malloc", 0, false},
 				{"func1", 6, false},
@@ -28,7 +28,7 @@ func TestDataCSimple(t *testing.T) {
 			},
 		},
 		{
-			[]int64{20, 1},
+			[]int64{1, 20},
 			[]frame{
 				{"malloc", 0, false},
 				{"func21", 12, false},
@@ -39,7 +39,7 @@ func TestDataCSimple(t *testing.T) {
 			},
 		},
 		{
-			[]int64{30, 1},
+			[]int64{1, 30},
 			[]frame{
 				{"malloc", 0, false},
 				{"func31", 29, true},
@@ -55,7 +55,7 @@ func TestDataCSimple(t *testing.T) {
 func TestDataRustSimple(t *testing.T) {
 	testMemoryProfiler(t, "../../testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm", []sample{
 		{
-			[]int64{120, 1},
+			[]int64{1, 120},
 			[]frame{
 				{"malloc", 0, false},                                                                        // malloc
 				{"std:sys:wasi:alloc:{impl#0}:alloc", 381, true},                                            // _ZN3std3sys4wasi5alloc81_$LT$impl$u20$core..alloc..global..GlobalAlloc$u20$for$u20$std..alloc..System$GT$5alloc17hf06d843ee28c936eE
@@ -115,10 +115,10 @@ func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
 	}
 
 	expectedTypes := []string{
-		"alloc_space",
 		"alloc_objects",
-		"inuse_space",
+		"alloc_space",
 		"inuse_objects",
+		"inuse_space",
 	}
 
 	if len(p.SampleType) != len(expectedTypes) {
