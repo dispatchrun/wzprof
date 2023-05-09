@@ -186,7 +186,7 @@ var (
 	printVersion bool
 )
 
-var Version = "dev"
+var version = "dev"
 
 func init() {
 	log.Default().SetOutput(os.Stderr)
@@ -205,7 +205,7 @@ func run(ctx context.Context) error {
 	flag.Parse()
 
 	if printVersion {
-		fmt.Printf("wzprof version %s\n", Version)
+		fmt.Printf("wzprof version %s\n", version)
 		return nil
 	}
 
