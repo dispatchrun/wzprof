@@ -42,15 +42,47 @@ application performance.
 You can either use `wzprof` as a CLI or as a library if you use the Wazero
 runtime libraries.
 
-You can install the latest version of `wzprof` via:
+To install the latest version of `wzprof`:
 ```
 go install github.com/stealthrocket/wzprof/cmd/wzprof@latest
 ```
-
-To use the library:
+To use the library as code in a Go program:
 ```
 go get github.com/stealthrocket/wzprof@latest
 ```
+
+### Run program to completion with CPU or memory profiling
+
+In those examples we set the sample rate to 1 to capture all samples because the
+test programs complete quickly.
+
+```
+wzprof -sample 1 -memprofile /tmp/profile ./testdata/c/simple.wasm
+```
+```
+wzprof -sample 1 -cpuprofile /tmp/profile \
+    ./testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm
+```
+```
+go tool pprof -http :4000 /tmp/profile
+```
+
+### Connect to running pprof server
+
+Similarly to [`net/http/pprof`](https://pkg.go.dev/net/http/pprof), `wzprof`
+can expose a pprof-compatible http endpoint on behalf of the guest application:
+
+```
+wzprof -pprof-addr :8080 ...
+```
+```
+go tool pprof -http :3030 http://localhost:8080/debug/pprof/profile?seconds=5
+```
+```
+go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
+```
+
+## Profilers
 
 The profiler is propagated to the Wazero runtime through its context:
 
@@ -110,38 +142,6 @@ if err := wzprof.WriteProfile("mem.pprof", memProfile); err != nil {
 Note that the program must spearate the compilation and instantiation of
 WebAssembly modules in order to use the profilers, because the module must be
 compiled first in order to build the list of symbols from the DWARF sections.
-
-### Examples
-
-#### Connect to running pprof server
-
-```
-wzprof -pprof-addr :8080 path/to/guest.wasm
-```
-```
-go tool pprof -http :3030 http://localhost:8080/debug/pprof/profile?seconds=5
-```
-```
-go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
-```
-
-#### Run program to completion with CPU or memory profiling
-
-In those examples we set the sample rate to 1 to capture all samples because the
-test programs complete quickly.
-
-```
-wzprof -sample 1 -memprofile /tmp/profile ./testdata/c/simple.wasm
-```
-```
-wzprof -sample 1 -cpuprofile /tmp/profile \
-    ./testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm
-```
-```
-go tool pprof -http :4000 /tmp/profile
-```
-
-## Profilers
 
 ### Memory
 
