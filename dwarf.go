@@ -188,12 +188,12 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 	if len(ranges) == 0 {
 		// If there is no range provided by dwarf, attach this
 		// subprogram to an artificial empty range unlikely to be used.
-		// This is so that we still have a record of the funciton in the
+		// This is so that we still have a record of the function in the
 		// subprograms collection, as that's where the name resolution
 		// for inline functions searches for the inlined function.
 		// Notably, it's likely that a subprogram without range
 		// represent a function that has only been inlined. This
-		// situation is temporary until we rework thie subprograms data
+		// situation is temporary until we rework the subprograms data
 		// structure.
 		ranges = append(ranges, pcrange{math.MaxUint32, math.MaxUint32})
 	}
