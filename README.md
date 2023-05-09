@@ -43,11 +43,11 @@ You can either use `wzprof` as a CLI or as a library if you use the Wazero
 runtime libraries.
 
 To install the latest version of `wzprof`:
-```
+```sh
 go install github.com/stealthrocket/wzprof/cmd/wzprof@latest
 ```
 To use the library as code in a Go program:
-```
+```sh
 go get github.com/stealthrocket/wzprof@latest
 ```
 
@@ -56,13 +56,13 @@ go get github.com/stealthrocket/wzprof@latest
 In those examples we set the sample rate to 1 to capture all samples because the
 test programs complete quickly.
 
-```
+```sh
 wzprof -sample 1 -memprofile /tmp/profile ./testdata/c/simple.wasm
 ```
-```
+```sh
 wzprof -sample 1 -cpuprofile /tmp/profile ./testdata/c/crunch_numbers.wasm
 ```
-```
+```sh
 go tool pprof -http :4000 /tmp/profile
 ```
 
@@ -71,17 +71,20 @@ go tool pprof -http :4000 /tmp/profile
 Similarly to [`net/http/pprof`](https://pkg.go.dev/net/http/pprof), `wzprof`
 can expose a pprof-compatible http endpoint on behalf of the guest application:
 
-```
+```sh
 wzprof -pprof-addr :8080 ...
 ```
+```sh
+go tool pprof -http :3030 'http://localhost:8080/debug/pprof/profile?seconds=5'
 ```
-go tool pprof -http :3030 http://localhost:8080/debug/pprof/profile?seconds=5
-```
-```
-go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
+```sh
+go tool pprof -http :3030 'http://localhost:8080/debug/pprof/heap'
 ```
 
 ## Profilers
+
+⚠️  The `wzprof` Go APIs depend on Wazero's `experimental` package which makes no
+guarantees of backward compatilbity!
 
 The following code snippet demonstrates how to integrate the profilers to a
 Wazero runtime within a Go program:

@@ -56,33 +56,33 @@ func WriteProfile(path string, prof *profile.Profile) error {
 }
 
 type Symbolizer interface {
-	// LocationsForPC returns a list of function locations for a given program
-	// counter, starting from current function followed by the inlined
-	// functions, in order of inlining. Result if empty if the pc cannot
-	// be resolved in the dwarf data.
-	LocationsForPC(pc uint64) []Location
+	// LocationsForSourceOffset returns a list of function locations for a given
+	// source offset, starting from current function followed by the inlined
+	// functions, in order of inlining. Result if empty if the pc cannot be
+	// resolved in the dwarf data.
+	LocationsForSourceOffset(offset uint64) []Location
 }
 
 type Location struct {
-	File    string
-	Line    int64
-	Column  int64
-	Inlined bool
-	PC      uint64
+	File         string
+	Line         int64
+	Column       int64
+	Inlined      bool
+	SourceOffset uint64
 	// Linkage Name if present, Name otherwise.
 	// Only present for inlined functions.
 	StableName string
 	HumanName  string
 }
 
-func locationForCall(symbols Symbolizer, def api.FunctionDefinition, pc uint64, funcs map[string]*profile.Function) []profile.Line {
+func locationForCall(symbols Symbolizer, def api.FunctionDefinition, offset uint64, funcs map[string]*profile.Function) []profile.Line {
 	// Cache miss. Get or create function and all the line
 	// locations associated with inlining.
 	var locations []Location
 	var symbolFound bool
 
-	if symbols != nil && pc > 0 {
-		locations = symbols.LocationsForPC(pc)
+	if symbols != nil && offset > 0 {
+		locations = symbols.LocationsForSourceOffset(offset)
 		symbolFound = len(locations) > 0
 	}
 	if len(locations) == 0 {
@@ -140,12 +140,12 @@ type locationKey struct {
 	pc     uint64
 }
 
-func makeLocationKey(fn api.FunctionDefinition, pc uint64) locationKey {
+func makeLocationKey(fn api.FunctionDefinition, pc experimental.ProgramCounter) locationKey {
 	return locationKey{
 		module: fn.ModuleName(),
 		index:  fn.Index(),
 		name:   fn.Name(),
-		pc:     pc,
+		pc:     uint64(pc),
 	}
 }
 
@@ -202,14 +202,21 @@ func (sc *stackCounter) sampleValue() []int64 {
 	return sc.value[:]
 }
 
+// Compile-time check that program counters are uint64 values.
+var _ = assertTypeIsUint64[experimental.ProgramCounter]()
+
+func assertTypeIsUint64[T ~uint64]() bool {
+	return true
+}
+
 type stackFrame struct {
-	fn api.FunctionDefinition
-	pc uint64
+	fn experimental.InternalFunction
+	pc experimental.ProgramCounter
 }
 
 type stackTrace struct {
-	fns []api.FunctionDefinition
-	pcs []uint64
+	fns []experimental.InternalFunction
+	pcs []experimental.ProgramCounter
 	key uint64
 }
 
@@ -217,15 +224,15 @@ func makeStackTrace(st stackTrace, si experimental.StackIterator) stackTrace {
 	st.fns = st.fns[:0]
 	st.pcs = st.pcs[:0]
 	for si.Next() {
-		st.fns = append(st.fns, si.FunctionDefinition())
-		st.pcs = append(st.pcs, si.SourceOffset())
+		st.fns = append(st.fns, si.Function())
+		st.pcs = append(st.pcs, si.ProgramCounter())
 	}
 	st.key = maphash.Bytes(stackTraceHashSeed, st.bytes())
 	return st
 }
 
 func (st stackTrace) host() bool {
-	return len(st.fns) > 0 && st.fns[0].GoFunction() != nil
+	return len(st.fns) > 0 && st.fns[0].Definition().GoFunction() != nil
 }
 
 func (st stackTrace) contains(sx stackTrace) bool {
@@ -271,7 +278,8 @@ func (st stackTrace) String() string {
 	sb := new(strings.Builder)
 	for i, n := 0, st.len(); i < n; i++ {
 		frame := st.index(i)
-		fmt.Fprintf(sb, "@%016x: %s\n", frame.pc, frame.fn.Name())
+		fndef := frame.fn.Definition()
+		fmt.Fprintf(sb, "%016x: %s\n", frame.pc, fndef.DebugName())
 	}
 	return sb.String()
 }
@@ -303,13 +311,15 @@ func buildProfile[T sampleType](sampleRate float64, symbols Symbolizer, samples 
 			fn := stack.fns[i]
 			pc := stack.pcs[i]
 
-			key := makeLocationKey(fn, pc)
+			def := fn.Definition()
+			key := makeLocationKey(def, pc)
 			loc := locationCache[key]
 			if loc == nil {
+				off := fn.SourceOffsetForPC(pc)
 				loc = &profile.Location{
 					ID:      locationID,
-					Line:    locationForCall(symbols, fn, pc, functionCache),
-					Address: pc,
+					Line:    locationForCall(symbols, def, off, functionCache),
+					Address: off,
 				}
 				locationID++
 				locationCache[key] = loc
