@@ -19,7 +19,7 @@ func BuildDwarfSymbolizer(module wazero.CompiledModule) (Symbolizer, error) {
 	return newDwarfmapper(module.CustomSections())
 }
 
-type pcrange = [2]uint64
+type sourceOffsetRange = [2]uint64
 
 type subprogram struct {
 	Entry     *dwarf.Entry
@@ -29,7 +29,7 @@ type subprogram struct {
 }
 
 type subprogramRange struct {
-	Range      pcrange
+	Range      sourceOffsetRange
 	Subprogram *subprogram
 }
 
@@ -195,7 +195,7 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 		// represent a function that has only been inlined. This
 		// situation is temporary until we rework the subprograms data
 		// structure.
-		ranges = append(ranges, pcrange{math.MaxUint32, math.MaxUint32})
+		ranges = append(ranges, sourceOffsetRange{math.MaxUint64, math.MaxUint64})
 	}
 
 	for _, pcr := range ranges {
@@ -206,13 +206,13 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 	}
 }
 
-func (d *dwarfmapper) LocationsForPC(pc uint64) []Location {
+func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 	// TODO: replace with binary search
 
 	var spgm *subprogram
 
 	for _, sr := range d.subprograms {
-		if sr.Range[0] <= pc && pc <= sr.Range[1] {
+		if sr.Range[0] <= offset && offset <= sr.Range[1] {
 			spgm = sr.Subprogram
 			break
 		}
@@ -245,14 +245,14 @@ func (d *dwarfmapper) LocationsForPC(pc uint64) []Location {
 	}
 	sort.Slice(lines, func(i, j int) bool { return lines[i].Address < lines[j].Address })
 
-	i := sort.Search(len(lines), func(i int) bool { return lines[i].Address >= pc })
+	i := sort.Search(len(lines), func(i int) bool { return lines[i].Address >= offset })
 	if i == len(lines) {
-		// no line information for this pc.
+		// no line information for this source offset.
 		return nil
 	}
 
 	l := lines[i]
-	if l.Address != pc {
+	if l.Address != offset {
 		// https://github.com/stealthrocket/wazero/blob/867459d7d5ed988a55452d6317ff3cc8451b8ff0/internal/wasmdebug/dwarf.go#L141-L150
 		// If the address doesn't match exactly, the previous
 		// entry is the one that contains the instruction.
@@ -278,19 +278,19 @@ func (d *dwarfmapper) LocationsForPC(pc uint64) []Location {
 	human, stable := d.namesForSubprogram(spgm.Entry, spgm)
 	locations := make([]Location, 0, 1+len(spgm.Inlines))
 	locations = append(locations, Location{
-		File:       le.File.Name,
-		Line:       int64(le.Line),
-		Column:     int64(le.Column),
-		Inlined:    len(spgm.Inlines) > 0,
-		PC:         pc,
-		HumanName:  human,
-		StableName: stable,
+		File:         le.File.Name,
+		Line:         int64(le.Line),
+		Column:       int64(le.Column),
+		Inlined:      len(spgm.Inlines) > 0,
+		SourceOffset: offset,
+		HumanName:    human,
+		StableName:   stable,
 	})
 
 	if len(spgm.Inlines) > 0 {
 		files := lr.Files()
 		for i := len(spgm.Inlines) - 1; i >= 0; i-- {
-			// TODO: check pc is in range of inline?
+			// TODO: check source offset is in range of inline?
 			f := spgm.Inlines[i]
 			fileIdx, ok := f.Val(dwarf.AttrCallFile).(int64)
 			if !ok || fileIdx >= int64(len(files)) {
@@ -301,13 +301,13 @@ func (d *dwarfmapper) LocationsForPC(pc uint64) []Location {
 			col, _ := f.Val(dwarf.AttrCallLine).(int64)
 			human, stable := d.namesForSubprogram(f, nil)
 			locations = append(locations, Location{
-				File:       file.Name,
-				Line:       line,
-				Column:     col,
-				Inlined:    i != 0,
-				PC:         pc,
-				StableName: stable,
-				HumanName:  human,
+				File:         file.Name,
+				Line:         line,
+				Column:       col,
+				Inlined:      i != 0,
+				SourceOffset: offset,
+				StableName:   stable,
+				HumanName:    human,
 			})
 		}
 	}

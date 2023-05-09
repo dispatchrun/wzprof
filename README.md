@@ -83,6 +83,9 @@ go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
 
 ## Profilers
 
+⚠️  The `wzprof` Go APIs depend on Wazero's `experimental` package which makes no
+guarantees of backward compatilbity!
+
 The following code snippet demonstrates how to integrate the profilers to a
 Wazero runtime within a Go program:
 
