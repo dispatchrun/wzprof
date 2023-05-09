@@ -15,7 +15,7 @@ profiler such as `perf`, but in many cases the recording and analysis of
 profiles remains a difficult task, especially due to features like JIT
 compilation.
 
-`pprof` is the de-factor standard profiling tool for Go programs, and offers
+`pprof` is the de-facto standard profiling tool for Go programs, and offers
 some of the simplest and quickest ways to gather insight into the performance
 of an application.
 

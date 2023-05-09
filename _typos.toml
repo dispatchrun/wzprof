@@ -1,0 +1,3 @@
+[default.extend-words]
+# token found in mangled function name in ./cmd/wzprof/main_test.go
+ded = "ded"

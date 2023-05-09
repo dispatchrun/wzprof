@@ -32,7 +32,7 @@ type CPUProfiler struct {
 // CPUProfiler instances created by NewCPUProfiler.
 type CPUProfilerOption func(*CPUProfiler)
 
-// EnableHostTime confiures a CPU time profiler to acount for time spent
+// EnableHostTime confiures a CPU time profiler to account for time spent
 // in calls to host functions.
 //
 // Default to false.
@@ -66,7 +66,7 @@ func NewCPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
 }
 
 // StartProfile begins recording the CPU profile. The method returns a boolean
-// to indicate whether starting the profile suceeded (e.g. false is returned if
+// to indicate whether starting the profile succeeded (e.g. false is returned if
 // it was already started).
 func (p *CPUProfiler) StartProfile() bool {
 	p.mutex.Lock()

@@ -1,4 +1,4 @@
-name: go-lint
+name: Lint
 on:
   push:
     tags:
@@ -18,7 +18,7 @@ env:
   GOLANGCI_LINT_VERSION: v1.52.2
 
 jobs:
-  lint:
+  golangci-lint:
     name: Go Lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -37,3 +37,16 @@ jobs:
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout 5m
+
+  spellcheck:
+    name: Spell Check with Typos
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Actions Repository
+      uses: actions/checkout@v2
+
+    - name: Check spelling of Go files
+      uses: crate-ci/typos@master
+      with:
+        files: '*.go'
+        write_changes: true

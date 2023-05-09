@@ -60,10 +60,10 @@ func locationForCall(symbols Symbolizer, def api.FunctionDefinition, pc uint64, 
 	}
 	if len(locations) == 0 {
 		// If we don't have a source location, attach to a
-		// generic location whithin the function.
+		// generic location within the function.
 		locations = []Location{{}}
 	}
-	// Provide defaults in case we couldn't resolve DWARF informations for
+	// Provide defaults in case we couldn't resolve DWARF information for
 	// the main function call's PC.
 	if locations[0].StableName == "" {
 		locations[0].StableName = def.Name()

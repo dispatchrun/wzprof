@@ -192,7 +192,7 @@ func run(ctx context.Context) error {
 
 	args := flag.Args()
 	if len(args) != 1 {
-		// TODO: pring flag usage
+		// TODO: print flag usage
 		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
 	}
 
