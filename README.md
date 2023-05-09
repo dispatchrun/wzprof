@@ -150,6 +150,7 @@ Memory profiling works by tracing specific functions. Supported functions are:
 - `malloc`
 - `calloc`
 - `realloc`
+- `free`
 - `runtime.mallocgc`
 - `runtime.alloc`
 
