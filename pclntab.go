@@ -347,9 +347,20 @@ type pclntabmapper struct {
 	pcstart uint64
 }
 
-func (p pclntabmapper) Lookup(s stackEntry) []location {
-	fmt.Println("fn:", s.fn.Name(), "pc:", s.pc, "into:", s.pc+p.pcstart)
-	pc := s.pc
+func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
+	data := wasmbinData(wasmbin)
+	pclntab := pclntabFromData(data)
+
+	lt := gosym.NewLineTable(pclntab, 0)
+	t, err := gosym.NewTable(nil, lt)
+	if err != nil {
+		return nil, err
+	}
+	pcstart := t.Funcs[0].Entry
+	return pclntabmapper{t: t, pcstart: pcstart}, nil
+}
+
+func (p pclntabmapper) LocationsForPC(pc uint64) []Location {
 	file, line, fn := p.t.PCToLine(pc + p.pcstart)
 	if fn == nil {
 		fmt.Println("could not lookup", pc)
@@ -360,21 +371,10 @@ func (p pclntabmapper) Lookup(s stackEntry) []location {
 	fmt.Println("--->", file, "line:", line)
 	fmt.Println("->", fn)
 
-	return []location{{
+	return []Location{{
 		File: file,
 		Line: int64(line),
 		PC:   pc,
 		// TODO: names
 	}}
-}
-
-func newPclntabmapper(pclntab []byte) (mapper, error) {
-	fmt.Println("pclntab size:", len(pclntab))
-	lt := gosym.NewLineTable(pclntab, 0)
-	t, err := gosym.NewTable(nil, lt)
-	if err != nil {
-		return nil, err
-	}
-	pcstart := t.Funcs[0].Entry
-	return pclntabmapper{t: t, pcstart: pcstart}, nil
 }
