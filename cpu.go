@@ -16,8 +16,8 @@ import (
 // samples of CPU time spent in functions of a WebAssembly module.
 //
 // The profiler generates samples of two types:
-// - "cpu" records the time spent in function calls (in nanoseconds).
 // - "sample" counts the number of function calls.
+// - "cpu" records the time spent in function calls (in nanoseconds).
 type CPUProfiler struct {
 	mutex  sync.Mutex
 	counts stackCounterMap
@@ -110,8 +110,8 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 
 	return buildProfile(sampleRate, symbols, samples, start, duration,
 		[]*profile.ValueType{
-			{Type: "cpu", Unit: "nanoseconds"},
 			{Type: "samples", Unit: "count"},
+			{Type: "cpu", Unit: "nanoseconds"},
 		},
 	)
 }
