@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 
 	"github.com/google/pprof/profile"
@@ -34,13 +35,14 @@ func main() {
 const defaultSampleRate = 1.0 / 19
 
 type program struct {
-	filePath   string
-	pprofAddr  string
-	cpuProfile string
-	memProfile string
-	sampleRate float64
-	hostTime   bool
-	mounts     []string
+	filePath    string
+	pprofAddr   string
+	cpuProfile  string
+	memProfile  string
+	sampleRate  float64
+	hostProfile bool
+	hostTime    bool
+	mounts      []string
 }
 
 func (prog *program) run(ctx context.Context) error {
@@ -96,17 +98,34 @@ func (prog *program) run(ctx context.Context) error {
 		}()
 	}
 
-	if prog.cpuProfile != "" {
-		cpu.StartProfile()
-		defer func() {
-			writeProfile(prog.cpuProfile, cpu.StopProfile(prog.sampleRate, symbols))
-		}()
-	}
-
-	if prog.memProfile != "" {
-		defer func() {
-			writeProfile(prog.memProfile, mem.NewProfile(prog.sampleRate, symbols))
-		}()
+	if prog.hostProfile {
+		if prog.cpuProfile != "" {
+			f, err := os.Create(prog.cpuProfile)
+			if err != nil {
+				return err
+			}
+			pprof.StartCPUProfile(f)
+			defer pprof.StopCPUProfile()
+		}
+		if prog.memProfile != "" {
+			f, err := os.Create(prog.memProfile)
+			if err != nil {
+				return err
+			}
+			defer pprof.WriteHeapProfile(f)
+		}
+	} else {
+		if prog.cpuProfile != "" {
+			cpu.StartProfile()
+			defer func() {
+				writeProfile(prog.cpuProfile, cpu.StopProfile(prog.sampleRate, symbols))
+			}()
+		}
+		if prog.memProfile != "" {
+			defer func() {
+				writeProfile(prog.memProfile, mem.NewProfile(prog.sampleRate, symbols))
+			}()
+		}
 	}
 
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -148,12 +167,13 @@ func silenceContextCanceled(err error) error {
 }
 
 var (
-	pprofAddr  string
-	cpuProfile string
-	memProfile string
-	sampleRate float64
-	hostTime   bool
-	mounts     string
+	pprofAddr   string
+	cpuProfile  string
+	memProfile  string
+	sampleRate  float64
+	hostProfile bool
+	hostTime    bool
+	mounts      string
 )
 
 func init() {
@@ -162,7 +182,8 @@ func init() {
 	flag.StringVar(&cpuProfile, "cpuprofile", "", "Write a CPU profile to the specified file before exiting.")
 	flag.StringVar(&memProfile, "memprofile", "", "Write a memory profile to the specified file before exiting.")
 	flag.Float64Var(&sampleRate, "sample", defaultSampleRate, "Set the profile sampling rate (0-1).")
-	flag.BoolVar(&hostTime, "host", false, "Include time spent in host function calls.")
+	flag.BoolVar(&hostProfile, "host", false, "Generate profiles of the host instead of the guest application.")
+	flag.BoolVar(&hostTime, "hosttime", false, "Include time spent in host function calls in guest CPU profile.")
 	flag.StringVar(&mounts, "mount", "", "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
 }
 
@@ -176,13 +197,14 @@ func run(ctx context.Context) error {
 	}
 
 	return (&program{
-		filePath:   args[0],
-		pprofAddr:  pprofAddr,
-		cpuProfile: cpuProfile,
-		memProfile: memProfile,
-		sampleRate: sampleRate,
-		hostTime:   hostTime,
-		mounts:     split(mounts),
+		filePath:    args[0],
+		pprofAddr:   pprofAddr,
+		cpuProfile:  cpuProfile,
+		memProfile:  memProfile,
+		sampleRate:  sampleRate,
+		hostProfile: hostProfile,
+		hostTime:    hostTime,
+		mounts:      split(mounts),
 	}).run(ctx)
 }
 
