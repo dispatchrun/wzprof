@@ -129,8 +129,6 @@ func (d *dataIterator) Next() (offset int64, seg []byte) {
 		return 0, nil
 	}
 
-	start := d.offset
-
 	// Format of mode 0 segment:
 	//
 	// varuint32 - mode (1 byte, 0)
@@ -161,8 +159,6 @@ func (d *dataIterator) Next() (offset int64, seg []byte) {
 	seg = d.read(int(length))
 	d.n--
 
-	fmt.Printf("READ SEGMENT: offset=%d vaddr=%d len=%d\n", start, offset, length)
-
 	return offset, seg
 }
 
@@ -183,7 +179,6 @@ func (d *dataIterator) SkipToDataOffset(offset int) (int64, []byte) {
 	for d.offset <= offset {
 		vaddr, seg := d.Next()
 		if d.offset < offset {
-			fmt.Println("SKIPPED")
 			continue
 		}
 		o := len(seg) + offset - d.offset
@@ -275,11 +270,23 @@ func pclntabFromData(b []byte) []byte {
 
 	functabsize := (int(nfunctab)*2 + 1) * functabFieldSize
 	end := functabAddr + uint64(functabsize)
-	fmt.Println("END:", end)
 	fillUntil(int(end))
 
-	// hack
-	fillUntil(300256)
+	// TODO: try to actually guess the end of pclntab.
+	for {
+		vaddr, seg := d.Next()
+		if seg == nil {
+			break
+		}
+		vm.CopyAtAddress(vaddr, seg)
+	}
+
+	if !bytes.HasPrefix(vm.b, magic) {
+		panic("pclntab should start with magic")
+	}
+	if uint64(len(vm.b)) < end {
+		panic("reconstructed pclntab should at least include end of functab")
+	}
 
 	return vm.b
 }
@@ -339,7 +346,6 @@ func (m *vmem) CopyAtAddress(addr int64, b []byte) {
 	if m.Start+int64(len(m.b)) != addr+int64(len(b)) {
 		panic("invalid copy")
 	}
-	fmt.Println("TOTAL VM SIZE:", len(m.b))
 }
 
 type pclntabmapper struct {
@@ -356,20 +362,20 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println(t.Objs[0])
+	fmt.Println("func len:", len(t.Funcs))
 	pcstart := t.Funcs[0].Entry
 	return pclntabmapper{t: t, pcstart: pcstart}, nil
 }
 
 func (p pclntabmapper) LocationsForPC(pc uint64) []Location {
+	// https://github.com/stealthrocket/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/compile/internal/wasm/ssa.go#L331-L338
+	// Caller PC is stored 8 bytes below first parameter.
 	file, line, fn := p.t.PCToLine(pc + p.pcstart)
 	if fn == nil {
 		fmt.Println("could not lookup", pc)
 		return nil
 	}
-
-	fmt.Println("FOUND PC!", pc)
-	fmt.Println("--->", file, "line:", line)
-	fmt.Println("->", fn)
 
 	return []Location{{
 		File: file,

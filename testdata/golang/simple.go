@@ -1,29 +1,18 @@
 package main
 
 import "fmt"
-
-// //go:noinline
-// func myfunc() {
-// 	things := make([]byte, 0, 42)
-
-// 	for i := 0; i < 100; i++ {
-// 		things = append(things, byte(i))
-// 	}
-
-// 	fmt.Println("final length:", len(things))
-// }
-
-// //go:noinline
-// func myOtherFunc(s int) int {
-// 	m := make(map[int]int, 0)
-// 	for i := 0; i < s; i++ {
-// 		m[i] = i
-// 	}
-// 	return len(m)
-// }
+import "runtime"
 
 //go:noinline
 func thealloc() []byte {
+	pcs := make([]uintptr, 100)
+	n := runtime.Callers(0, pcs)
+	pcs = pcs[:n]
+
+	for _, pc := range pcs {
+		fmt.Println("-", pc)
+	}
+
 	return make([]byte, 11111)
 }
 
