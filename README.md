@@ -166,3 +166,10 @@ the number of time it sees a unique stack trace.
 The CPU time profiler measures the actual time spent on-CPU without taking into
 account the off-CPU time (e.g waiting for I/O). For this profiler, all the
 host-functions are considered off-CPU.
+
+## Contributing
+
+Pull requests are welcome! Anything that is not a simple fix would probably
+benefit from being discussed in an issue first.
+
+Remember to be respectful and open minded!
