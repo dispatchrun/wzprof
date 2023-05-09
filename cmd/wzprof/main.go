@@ -42,6 +42,7 @@ type program struct {
 	sampleRate  float64
 	hostProfile bool
 	hostTime    bool
+	inuseMemory bool
 	mounts      []string
 }
 
@@ -52,8 +53,8 @@ func (prog *program) run(ctx context.Context) error {
 		return fmt.Errorf("loading wasm module: %w", err)
 	}
 
-	cpu := wzprof.NewCPUProfiler(wzprof.EnableHostTime(prog.hostTime))
-	mem := wzprof.NewMemoryProfiler()
+	cpu := wzprof.NewCPUProfiler(wzprof.ProfileHostTime(prog.hostTime))
+	mem := wzprof.NewMemoryProfiler(wzprof.ProfileInuseMemory(prog.inuseMemory))
 
 	var listeners []experimental.FunctionListenerFactory
 	if prog.cpuProfile != "" || prog.pprofAddr != "" {
@@ -173,6 +174,7 @@ var (
 	sampleRate  float64
 	hostProfile bool
 	hostTime    bool
+	inuseMemory bool
 	mounts      string
 )
 
@@ -184,6 +186,7 @@ func init() {
 	flag.Float64Var(&sampleRate, "sample", defaultSampleRate, "Set the profile sampling rate (0-1).")
 	flag.BoolVar(&hostProfile, "host", false, "Generate profiles of the host instead of the guest application.")
 	flag.BoolVar(&hostTime, "iowait", false, "Include time spent waiting on I/O in guest CPU profile.")
+	flag.BoolVar(&inuseMemory, "inuse", false, "Include snapshots of memory in use (experimental).")
 	flag.StringVar(&mounts, "mount", "", "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
 }
 
@@ -204,6 +207,7 @@ func run(ctx context.Context) error {
 		sampleRate:  sampleRate,
 		hostProfile: hostProfile,
 		hostTime:    hostTime,
+		inuseMemory: inuseMemory,
 		mounts:      split(mounts),
 	}).run(ctx)
 }

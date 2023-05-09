@@ -35,6 +35,17 @@ type MemoryProfiler struct {
 // MemoryProfiler instances created by NewMemoryProfiler.
 type MemoryProfilerOption func(*MemoryProfiler)
 
+// ProfileInuseMemory is a memory profiler option which enables tracking of
+// allocated and freed objects to generate snapshots of the current state of
+// a program memory.
+func ProfileInuseMemory(enable bool) MemoryProfilerOption {
+	return func(p *MemoryProfiler) {
+		if enable {
+			p.inuse = make(map[uint32]memoryAllocation)
+		}
+	}
+}
+
 type memoryAllocation struct {
 	*stackCounter
 	size uint32
@@ -45,7 +56,6 @@ type memoryAllocation struct {
 func NewMemoryProfiler(opts ...MemoryProfilerOption) *MemoryProfiler {
 	p := &MemoryProfiler{
 		alloc: make(stackCounterMap),
-		inuse: make(map[uint32]memoryAllocation),
 		start: time.Now(),
 	}
 	for _, opt := range opts {
@@ -57,14 +67,22 @@ func NewMemoryProfiler(opts ...MemoryProfilerOption) *MemoryProfiler {
 // NewProfile takes a snapshot of the current memory allocation state and builds
 // a profile representing the state of the program memory.
 func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
-	return buildProfile(sampleRate, symbols, p.snapshot(), p.start, time.Since(p.start),
-		[]*profile.ValueType{
-			{Type: "alloc_objects", Unit: "count"},
-			{Type: "alloc_space", Unit: "byte"},
-			{Type: "inuse_objects", Unit: "count"},
-			{Type: "inuse_space", Unit: "byte"},
-		},
-	)
+	sampleType := []*profile.ValueType{
+		{Type: "alloc_objects", Unit: "count"},
+		{Type: "alloc_space", Unit: "byte"},
+	}
+
+	if p.inuse != nil {
+		// TODO: when can track freeing of garbage collected languages like Go,
+		// this should be enabled by default, and we can remove the slicing of
+		// sample values in buildProfile.
+		sampleType = append(sampleType,
+			&profile.ValueType{Type: "inuse_objects", Unit: "count"},
+			&profile.ValueType{Type: "inuse_space", Unit: "byte"},
+		)
+	}
+
+	return buildProfile(sampleRate, symbols, p.snapshot(), p.start, time.Since(p.start), sampleType)
 }
 
 type memorySample struct {
@@ -159,14 +177,18 @@ func (p *MemoryProfiler) observeAlloc(addr, size uint32, stack stackTrace) {
 	p.mutex.Lock()
 	alloc := p.alloc.lookup(stack)
 	alloc.observe(int64(size))
-	p.inuse[addr] = memoryAllocation{alloc, size}
+	if p.inuse != nil {
+		p.inuse[addr] = memoryAllocation{alloc, size}
+	}
 	p.mutex.Unlock()
 }
 
 func (p *MemoryProfiler) observeFree(addr uint32) {
-	p.mutex.Lock()
-	delete(p.inuse, addr)
-	p.mutex.Unlock()
+	if p.inuse != nil {
+		p.mutex.Lock()
+		delete(p.inuse, addr)
+		p.mutex.Unlock()
+	}
 }
 
 type mallocProfiler struct {

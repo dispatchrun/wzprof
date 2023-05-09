@@ -117,8 +117,6 @@ func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
 	expectedTypes := []string{
 		"alloc_objects",
 		"alloc_space",
-		"inuse_objects",
-		"inuse_space",
 	}
 
 	if len(p.SampleType) != len(expectedTypes) {

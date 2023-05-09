@@ -32,11 +32,11 @@ type CPUProfiler struct {
 // CPUProfiler instances created by NewCPUProfiler.
 type CPUProfilerOption func(*CPUProfiler)
 
-// EnableHostTime confiures a CPU time profiler to account for time spent
+// ProfileHostTime confiures a CPU time profiler to account for time spent
 // in calls to host functions.
 //
 // Default to false.
-func EnableHostTime(enable bool) CPUProfilerOption {
+func ProfileHostTime(enable bool) CPUProfilerOption {
 	return func(p *CPUProfiler) { p.host = enable }
 }
 

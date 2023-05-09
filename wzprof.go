@@ -289,7 +289,7 @@ func buildProfile[T sampleType](sampleRate float64, symbols Symbolizer, samples 
 
 		prof.Sample = append(prof.Sample, &profile.Sample{
 			Location: location,
-			Value:    sample.sampleValue(),
+			Value:    sample.sampleValue()[:len(sampleType)],
 		})
 	}
 
