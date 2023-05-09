@@ -104,15 +104,15 @@ func (prog *program) run(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			pprof.StartCPUProfile(f)
-			defer pprof.StopCPUProfile()
+			startCPUProfile(f)
+			defer stopCPUProfile()
 		}
 		if prog.memProfile != "" {
 			f, err := os.Create(prog.memProfile)
 			if err != nil {
 				return err
 			}
-			defer pprof.WriteHeapProfile(f)
+			defer writeHeapProfile(f)
 		}
 	} else {
 		if prog.cpuProfile != "" {
@@ -215,9 +215,25 @@ func split(s string) []string {
 	return strings.Split(s, ",")
 }
 
+func startCPUProfile(f *os.File) {
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Print("ERROR: starting CPU profile:", err)
+	}
+}
+
+func stopCPUProfile() {
+	pprof.StopCPUProfile()
+}
+
+func writeHeapProfile(f *os.File) {
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		log.Print("ERROR: writing heap profile:", err)
+	}
+}
+
 func writeProfile(path string, prof *profile.Profile) {
 	if err := wzprof.WriteProfile(path, prof); err != nil {
-		log.Fatalf("ERROR: writing profile: %s", err)
+		log.Print("ERROR: writing profile:", err)
 	}
 }
 
