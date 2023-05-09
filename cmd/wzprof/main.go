@@ -158,7 +158,7 @@ func init() {
 	flag.StringVar(&pprofAddr, "pprof-addr", "", "Address where to expose a pprof HTTP endpoint.")
 	flag.StringVar(&cpuProfile, "cpuprofile", "", "Write a CPU profile to the specified file before exiting.")
 	flag.StringVar(&memProfile, "memprofile", "", "Write a memory profile to the specified file before exiting.")
-	flag.Float64Var(&sampleRate, "sample-rate", defaultSampleRate, "Set the profile sampling rate (0-1).")
+	flag.Float64Var(&sampleRate, "sample", defaultSampleRate, "Set the profile sampling rate (0-1).")
 	flag.BoolVar(&hostTime, "host", false, "Include time spent in host function calls.")
 	flag.StringVar(&mounts, "mount", "", "Comma-separated list of directories to mount (e.g. /tmp:/tmp:ro).")
 }

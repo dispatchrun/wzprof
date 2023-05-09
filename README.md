@@ -127,11 +127,15 @@ go tool pprof -http :3030 http://localhost:8080/debug/pprof/heap
 
 #### Run program to completion with CPU or memory profiling
 
+In those examples we set the sample rate to 1 to capture all samples because the
+test programs complete quickly.
+
 ```
-wzprof -cpuprofile /tmp/profile path/to/guest.wasm
+wzprof -sample 1 -memprofile /tmp/profile ./testdata/c/simple.wasm
 ```
 ```
-wzprof -memprofile /tmp/profile path/to/guest.wasm
+wzprof -sample 1 -cpuprofile /tmp/profile \
+    ./testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm
 ```
 ```
 go tool pprof -http :4000 /tmp/profile
