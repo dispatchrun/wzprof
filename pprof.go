@@ -189,18 +189,23 @@ func indexTmplExecute(w io.Writer, guest, host []profileEntry) error {
 <br>
 Types of profiles available:
 <table>
-<thead><td>Count</td><td>Profile</td></thead>
+<thead><td>Count</td><td>Profile (guest)</td></thead>
 `)
 
 	for _, profile := range guest {
 		link := &url.URL{Path: profile.Href}
-		name := "(guest) " + profile.Name
+		name := profile.Name
 		fmt.Fprintf(&b, "<tr><td>%d</td><td><a href='%s'>%s</a></td></tr>\n", profile.Count, link, html.EscapeString(name))
 	}
 
+	b.WriteString(`</table>
+<table>
+<thead><td>Count</td><td>Profile (host)</td></thead>
+`)
+
 	for _, profile := range host {
 		link := &url.URL{Path: profile.Href, RawQuery: fmt.Sprintf("host&debug=%d", profile.Debug)}
-		name := "(host) " + profile.Name
+		name := profile.Name
 		fmt.Fprintf(&b, "<tr><td>%d</td><td><a href='%s'>%s</a></td></tr>\n", profile.Count, link, html.EscapeString(name))
 	}
 
