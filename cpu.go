@@ -108,12 +108,34 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 		}
 	}
 
-	return buildProfile(sampleRate, symbols, samples, start, duration,
-		[]*profile.ValueType{
-			{Type: "samples", Unit: "count"},
-			{Type: "cpu", Unit: "nanoseconds"},
-		},
-	)
+	return buildProfile(sampleRate, symbols, samples, start, duration, p.SampleType())
+}
+
+// Name returns "profile" to match the name of the CPU profiler in pprof.
+func (p *CPUProfiler) Name() string {
+	return "profile"
+}
+
+// Desc returns a description copied from net/http/pprof.
+func (p *CPUProfiler) Desc() string {
+	return profileDescriptions[p.Name()]
+}
+
+// Count returns the number of execution stacks currently recorded in p.
+func (p *CPUProfiler) Count() int {
+	p.mutex.Lock()
+	n := len(p.counts)
+	p.mutex.Unlock()
+	return n
+}
+
+// SampleType returns the set of value types present in samples recorded by the
+// CPU profiler.
+func (p *CPUProfiler) SampleType() []*profile.ValueType {
+	return []*profile.ValueType{
+		{Type: "samples", Unit: "count"},
+		{Type: "cpu", Unit: "nanoseconds"},
+	}
 }
 
 // NewHandler returns a http handler allowing the profiler to be exposed on a

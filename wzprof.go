@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"hash/maphash"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -13,6 +14,32 @@ import (
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 	"golang.org/x/exp/slices"
+)
+
+// Profiler is an interface implemented by all profiler types available in this
+// package.
+type Profiler interface {
+	experimental.FunctionListenerFactory
+
+	// Returns the name of the profiler.
+	Name() string
+
+	// Returns a human readble description of the profiler.
+	Desc() string
+
+	// Returns the number of execution stacks recorded in the profiler.
+	Count() int
+
+	// Returns the set of value types present in samples recorded by the profiler.
+	SampleType() []*profile.ValueType
+
+	// Returns a new http handler suited to expose profiles on a pprof endpoint.
+	NewHandler(sampleRate float64, symbols Symbolizer) http.Handler
+}
+
+var (
+	_ Profiler = (*CPUProfiler)(nil)
+	_ Profiler = (*MemoryProfiler)(nil)
 )
 
 //go:linkname nanotime runtime.nanotime
@@ -135,6 +162,10 @@ func (scm stackCounterMap) lookup(st stackTrace) *stackCounter {
 
 func (scm stackCounterMap) observe(st stackTrace, val int64) {
 	scm.lookup(st).observe(val)
+}
+
+func (scm stackCounterMap) len() int {
+	return len(scm)
 }
 
 type stackCounter struct {

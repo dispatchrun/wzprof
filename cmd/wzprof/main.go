@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	httpprof "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -88,19 +87,7 @@ func (prog *program) run(ctx context.Context) error {
 
 	if prog.pprofAddr != "" {
 		server := http.NewServeMux()
-		server.Handle("/debug/pprof/profile", cpu.NewHandler(prog.sampleRate, symbols))
-		server.Handle("/debug/pprof/heap", mem.NewHandler(prog.sampleRate, symbols))
-
-		server.HandleFunc("/debug/host", httpprof.Index)
-		server.HandleFunc("/debug/host/cmdline", httpprof.Cmdline)
-		server.HandleFunc("/debug/host/profile", httpprof.Profile)
-		server.HandleFunc("/debug/host/symbol", httpprof.Symbol)
-		server.HandleFunc("/debug/host/trace", httpprof.Trace)
-		server.Handle("/debug/host/", http.StripPrefix("/debug/host/",
-			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				httpprof.Handler(r.URL.Path).ServeHTTP(w, r)
-			}),
-		))
+		server.Handle("/debug/pprof/", wzprof.Index(prog.sampleRate, symbols, cpu, mem))
 
 		go func() {
 			if err := http.ListenAndServe(prog.pprofAddr, server); err != nil {
