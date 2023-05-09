@@ -67,6 +67,30 @@ func NewMemoryProfiler(opts ...MemoryProfilerOption) *MemoryProfiler {
 // NewProfile takes a snapshot of the current memory allocation state and builds
 // a profile representing the state of the program memory.
 func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
+	return buildProfile(sampleRate, symbols, p.snapshot(), p.start, time.Since(p.start), p.SampleType())
+}
+
+// Name returns "allocs" to match the name of the memory profiler in pprof.
+func (p *MemoryProfiler) Name() string {
+	return "allocs"
+}
+
+// Desc returns a description copied from net/http/pprof.
+func (p *MemoryProfiler) Desc() string {
+	return profileDescriptions[p.Name()]
+}
+
+// Count returns the number of allocation stacks recorded in p.
+func (p *MemoryProfiler) Count() int {
+	p.mutex.Lock()
+	n := p.alloc.len()
+	p.mutex.Unlock()
+	return n
+}
+
+// SampleType returns the set of value types present in samples recorded by the
+// memory profiler.
+func (p *MemoryProfiler) SampleType() []*profile.ValueType {
 	sampleType := []*profile.ValueType{
 		{Type: "alloc_objects", Unit: "count"},
 		{Type: "alloc_space", Unit: "byte"},
@@ -82,7 +106,7 @@ func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *pro
 		)
 	}
 
-	return buildProfile(sampleRate, symbols, p.snapshot(), p.start, time.Since(p.start), sampleType)
+	return sampleType
 }
 
 type memorySample struct {

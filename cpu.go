@@ -108,12 +108,34 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 		}
 	}
 
-	return buildProfile(sampleRate, symbols, samples, start, duration,
-		[]*profile.ValueType{
-			{Type: "samples", Unit: "count"},
-			{Type: "cpu", Unit: "nanoseconds"},
-		},
-	)
+	return buildProfile(sampleRate, symbols, samples, start, duration, p.SampleType())
+}
+
+// Name returns "profile" to match the name of the CPU profiler in pprof.
+func (p *CPUProfiler) Name() string {
+	return "profile"
+}
+
+// Desc returns a description copied from net/http/pprof.
+func (p *CPUProfiler) Desc() string {
+	return profileDescriptions[p.Name()]
+}
+
+// Count returns the number of execution stacks currently recorded in p.
+func (p *CPUProfiler) Count() int {
+	p.mutex.Lock()
+	n := len(p.counts)
+	p.mutex.Unlock()
+	return n
+}
+
+// SampleType returns the set of value types present in samples recorded by the
+// CPU profiler.
+func (p *CPUProfiler) SampleType() []*profile.ValueType {
+	return []*profile.ValueType{
+		{Type: "samples", Unit: "count"},
+		{Type: "cpu", Unit: "nanoseconds"},
+	}
 }
 
 // NewHandler returns a http handler allowing the profiler to be exposed on a
@@ -163,12 +185,12 @@ func (p *CPUProfiler) NewHandler(sampleRate float64, symbols Symbolizer) http.Ha
 // NewFunctionListener returns a function listener suited to record CPU timings
 // of calls to the function passed as argument.
 func (p *CPUProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
-	return cpuListener{p}
+	return cpuProfiler{p}
 }
 
-type cpuListener struct{ *CPUProfiler }
+type cpuProfiler struct{ *CPUProfiler }
 
-func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p cpuProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
 	var frame cpuTimeFrame
 	p.mutex.Lock()
 
@@ -193,7 +215,7 @@ func (p cpuListener) Before(ctx context.Context, mod api.Module, def api.Functio
 	return ctx
 }
 
-func (p cpuListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+func (p cpuProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
 	i := len(p.frames) - 1
 	f := p.frames[i]
 	p.frames = p.frames[:i]

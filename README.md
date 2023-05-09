@@ -60,8 +60,7 @@ test programs complete quickly.
 wzprof -sample 1 -memprofile /tmp/profile ./testdata/c/simple.wasm
 ```
 ```
-wzprof -sample 1 -cpuprofile /tmp/profile \
-    ./testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm
+wzprof -sample 1 -cpuprofile /tmp/profile ./testdata/c/crunch_numbers.wasm
 ```
 ```
 go tool pprof -http :4000 /tmp/profile

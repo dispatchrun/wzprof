@@ -6,11 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
-	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"strings"
 
@@ -87,13 +88,11 @@ func (prog *program) run(ctx context.Context) error {
 	}
 
 	if prog.pprofAddr != "" {
-		pprof := http.NewServeMux()
-		pprof.Handle("/debug/pprof/profile", cpu.NewHandler(prog.sampleRate, symbols))
-		pprof.Handle("/debug/pprof/heap", mem.NewHandler(prog.sampleRate, symbols))
-		pprof.Handle("/wzprof", http.DefaultServeMux)
+		server := http.NewServeMux()
+		server.Handle("/debug/pprof/", wzprof.Index(prog.sampleRate, symbols, cpu, mem))
 
 		go func() {
-			if err := http.ListenAndServe(prog.pprofAddr, pprof); err != nil {
+			if err := http.ListenAndServe(prog.pprofAddr, server); err != nil {
 				log.Println(err)
 			}
 		}()
@@ -108,6 +107,7 @@ func (prog *program) run(ctx context.Context) error {
 			startCPUProfile(f)
 			defer stopCPUProfile()
 		}
+
 		if prog.memProfile != "" {
 			f, err := os.Create(prog.memProfile)
 			if err != nil {
@@ -115,18 +115,25 @@ func (prog *program) run(ctx context.Context) error {
 			}
 			defer writeHeapProfile(f)
 		}
-	} else {
-		if prog.cpuProfile != "" {
-			cpu.StartProfile()
-			defer func() {
-				writeProfile(prog.cpuProfile, cpu.StopProfile(prog.sampleRate, symbols))
-			}()
-		}
-		if prog.memProfile != "" {
-			defer func() {
-				writeProfile(prog.memProfile, mem.NewProfile(prog.sampleRate, symbols))
-			}()
-		}
+	}
+
+	if prog.cpuProfile != "" {
+		cpu.StartProfile()
+		defer func() {
+			p := cpu.StopProfile(prog.sampleRate, symbols)
+			if !prog.hostProfile {
+				writeProfile(prog.cpuProfile, p)
+			}
+		}()
+	}
+
+	if prog.memProfile != "" {
+		defer func() {
+			p := mem.NewProfile(prog.sampleRate, symbols)
+			if !prog.hostProfile {
+				writeProfile(prog.memProfile, p)
+			}
+		}()
 	}
 
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -198,6 +205,10 @@ func run(ctx context.Context) error {
 		// TODO: print flag usage
 		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
 	}
+
+	rate := int(math.Ceil(1 / sampleRate))
+	runtime.SetBlockProfileRate(rate)
+	runtime.SetMutexProfileFraction(rate)
 
 	return (&program{
 		filePath:    args[0],
