@@ -35,6 +35,17 @@ type MemoryProfiler struct {
 // MemoryProfiler instances created by NewMemoryProfiler.
 type MemoryProfilerOption func(*MemoryProfiler)
 
+// ProfileInuseMemory is a memory profiler option which enables tracking of
+// allocated and freed objects to generate snapshots of the current state of
+// a program memory.
+func ProfileInuseMemory(enable bool) MemoryProfilerOption {
+	return func(p *MemoryProfiler) {
+		if enable {
+			p.inuse = make(map[uint32]memoryAllocation)
+		}
+	}
+}
+
 type memoryAllocation struct {
 	*stackCounter
 	size uint32
@@ -147,7 +158,6 @@ func (p *MemoryProfiler) NewListener(def api.FunctionDefinition) experimental.Fu
 	case "realloc":
 		return &reallocProfiler{memory: p}
 	case "free":
-		p.initInuseMemoryProfile()
 		return &freeProfiler{memory: p}
 
 	// Go
@@ -160,12 +170,6 @@ func (p *MemoryProfiler) NewListener(def api.FunctionDefinition) experimental.Fu
 
 	default:
 		return nil
-	}
-}
-
-func (p *MemoryProfiler) initInuseMemoryProfile() {
-	if p.inuse == nil {
-		p.inuse = make(map[uint32]memoryAllocation)
 	}
 }
 
