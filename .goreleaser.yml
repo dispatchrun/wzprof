@@ -17,3 +17,8 @@ release:
   github:
     owner: stealthrocket
     name: wzprof
+  draft: true
+  prerelease: auto
+  mode: replace
+changelog:
+  use: github-native
