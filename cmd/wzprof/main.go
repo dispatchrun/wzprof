@@ -218,20 +218,13 @@ func run(ctx context.Context) error {
 
 	filePath := args[0]
 
-	args = flag.Args()[1:]
-	if len(args) > 1 {
-		if args[0] == "--" {
-			args = args[1:]
-		}
-	}
-
 	rate := int(math.Ceil(1 / sampleRate))
 	runtime.SetBlockProfileRate(rate)
 	runtime.SetMutexProfileFraction(rate)
 
 	return (&program{
 		filePath:    filePath,
-		args:        args,
+		args:        args[1:],
 		pprofAddr:   pprofAddr,
 		cpuProfile:  cpuProfile,
 		memProfile:  memProfile,
