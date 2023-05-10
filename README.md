@@ -2,14 +2,12 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/stealthrocket/wzprof.svg)](https://pkg.go.dev/github.com/stealthrocket/wzprof)
 [![Apache 2 License](https://img.shields.io/badge/license-Apache%202-blue.svg)](LICENSE)
 
-[wazero](https://github.com/tetratelabs/wazero)
-[runtime](https://pkg.go.dev/github.com/tetratelabs/wazero#Runtime)
-
 # wzprof
 
 `wzprof`, pronounced as you think it should, is as pprof based profiler for
-WebAssembly built on top of [**Wazero**][wazero]. It offers the ability to collect
-CPU and Memory profiles during the execution of WebAssembly modules.
+WebAssembly built on top of [**Wazero**](https://github.com/tetratelabs/wazero).
+It offers the ability to collect CPU and Memory profiles during the execution of
+WebAssembly modules.
 
 ## Motivation
 
