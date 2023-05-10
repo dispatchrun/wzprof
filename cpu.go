@@ -40,11 +40,11 @@ func ProfileHostTime(enable bool) CPUProfilerOption {
 	return func(p *CPUProfiler) { p.host = enable }
 }
 
-// TimeFunc configures the time function used by the CPU profiler to collect
-// monotonic timestamps.
+// ProfileTimeFunc configures the time function used by the CPU profiler to
+// collect monotonic timestamps.
 //
 // By default, the system's monotonic time is used.
-func TimeFunc(time func() int64) CPUProfilerOption {
+func ProfileTimeFunc(time func() int64) CPUProfilerOption {
 	return func(p *CPUProfiler) { p.time = time }
 }
 
