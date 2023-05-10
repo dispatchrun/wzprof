@@ -53,12 +53,12 @@ type memoryAllocation struct {
 
 // NewMemoryProfiler constructs a new instance of MemoryProfiler using the given
 // time function to record the profile execution time.
-func NewMemoryProfiler(opts ...MemoryProfilerOption) *MemoryProfiler {
+func NewMemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
 	p := &MemoryProfiler{
 		alloc: make(stackCounterMap),
 		start: time.Now(),
 	}
-	for _, opt := range opts {
+	for _, opt := range options {
 		opt(p)
 	}
 	return p
