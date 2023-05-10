@@ -35,10 +35,9 @@ type MemoryProfiler struct {
 // MemoryProfiler instances created by NewMemoryProfiler.
 type MemoryProfilerOption func(*MemoryProfiler)
 
-// ProfileInuseMemory is a memory profiler option which enables tracking of
-// allocated and freed objects to generate snapshots of the current state of
-// a program memory.
-func ProfileInuseMemory(enable bool) MemoryProfilerOption {
+// Inuse is a memory profiler option which enables tracking of allocated and
+// freed objects to generate snapshots of the current state of a program memory.
+func Inuse(enable bool) MemoryProfilerOption {
 	return func(p *MemoryProfiler) {
 		if enable {
 			p.inuse = make(map[uint32]memoryAllocation)

@@ -32,19 +32,19 @@ type CPUProfiler struct {
 // CPUProfiler instances created by NewCPUProfiler.
 type CPUProfilerOption func(*CPUProfiler)
 
-// ProfileHostTime confiures a CPU time profiler to account for time spent
-// in calls to host functions.
+// HostTime confiures a CPU time profiler to account for time spent in calls
+// to host functions.
 //
 // Default to false.
-func ProfileHostTime(enable bool) CPUProfilerOption {
+func HostTime(enable bool) CPUProfilerOption {
 	return func(p *CPUProfiler) { p.host = enable }
 }
 
-// ProfileTimeFunc configures the time function used by the CPU profiler to
-// collect monotonic timestamps.
+// TimeFunc configures the time function used by the CPU profiler to collect
+// monotonic timestamps.
 //
 // By default, the system's monotonic time is used.
-func ProfileTimeFunc(time func() int64) CPUProfilerOption {
+func TimeFunc(time func() int64) CPUProfilerOption {
 	return func(p *CPUProfiler) { p.time = time }
 }
 
