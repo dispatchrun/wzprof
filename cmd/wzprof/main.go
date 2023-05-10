@@ -37,6 +37,7 @@ const defaultSampleRate = 1.0 / 19
 
 type program struct {
 	filePath    string
+	args        []string
 	pprofAddr   string
 	cpuProfile  string
 	memProfile  string
@@ -149,7 +150,7 @@ func (prog *program) run(ctx context.Context) error {
 			WithSysNanosleep().
 			WithSysNanotime().
 			WithSysWalltime().
-			WithArgs(wasmName).
+			WithArgs(append([]string{wasmName}, prog.args...)...).
 			WithFSConfig(createFSConfig(prog.mounts))
 
 		instance, err := runtime.InstantiateModule(ctx, compiledModule, config)
@@ -210,9 +211,18 @@ func run(ctx context.Context) error {
 	}
 
 	args := flag.Args()
-	if len(args) != 1 {
+	if len(args) < 1 {
 		// TODO: print flag usage
 		return fmt.Errorf("usage: wzprof </path/to/app.wasm>")
+	}
+
+	filePath := args[0]
+
+	args = flag.Args()[1:]
+	if len(args) > 1 {
+		if args[0] == "--" {
+			args = args[1:]
+		}
 	}
 
 	rate := int(math.Ceil(1 / sampleRate))
@@ -220,7 +230,8 @@ func run(ctx context.Context) error {
 	runtime.SetMutexProfileFraction(rate)
 
 	return (&program{
-		filePath:    args[0],
+		filePath:    filePath,
+		args:        args,
 		pprofAddr:   pprofAddr,
 		cpuProfile:  cpuProfile,
 		memProfile:  memProfile,
