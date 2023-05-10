@@ -78,11 +78,13 @@ func sortProfiles(entries []profileEntry) {
 	})
 }
 
-// Index responds with the pprof-formatted profile named by the request.
-// For example, "/debug/pprof/heap" serves the "heap" profile.
-// Index responds to a request for "/debug/pprof/" with an HTML page
-// listing the available profiles.
-func Index(sampleRate float64, symbols Symbolizer, profilers ...Profiler) http.Handler {
+// Handler returns a http handler which responds with the pprof-formatted
+// profile named by the request. For example, "/debug/pprof/heap" serves the
+// "heap" profile.
+//
+// Handler responds to a request for "/debug/pprof/" with an HTML page listing
+// the available profiles.
+func Handler(sampleRate float64, symbols Symbolizer, profilers ...Profiler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var guest, host []profileEntry
 

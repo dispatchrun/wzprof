@@ -89,7 +89,7 @@ func (prog *program) run(ctx context.Context) error {
 
 	if prog.pprofAddr != "" {
 		server := http.NewServeMux()
-		server.Handle("/debug/pprof/", wzprof.Index(prog.sampleRate, symbols, cpu, mem))
+		server.Handle("/debug/pprof/", wzprof.Handler(prog.sampleRate, symbols, cpu, mem))
 
 		go func() {
 			if err := http.ListenAndServe(prog.pprofAddr, server); err != nil {
