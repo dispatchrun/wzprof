@@ -54,8 +54,8 @@ func (prog *program) run(ctx context.Context) error {
 		return fmt.Errorf("loading wasm module: %w", err)
 	}
 
-	cpu := wzprof.NewCPUProfiler(wzprof.ProfileHostTime(prog.hostTime))
-	mem := wzprof.NewMemoryProfiler(wzprof.ProfileInuseMemory(prog.inuseMemory))
+	cpu := wzprof.NewCPUProfiler(wzprof.HostTime(prog.hostTime))
+	mem := wzprof.NewMemoryProfiler(wzprof.InuseMemory(prog.inuseMemory))
 
 	var listeners []experimental.FunctionListenerFactory
 	if prog.cpuProfile != "" || prog.pprofAddr != "" {
