@@ -221,16 +221,16 @@ type mallocProfiler struct {
 	stack  stackTrace
 }
 
-func (p *mallocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p *mallocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
 	p.size = api.DecodeU32(params[0])
 	p.stack = makeStackTrace(p.stack, si)
-	return ctx
 }
 
-func (p *mallocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
-	if err == nil {
-		p.memory.observeAlloc(api.DecodeU32(results[0]), p.size, p.stack)
-	}
+func (p *mallocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
+	p.memory.observeAlloc(api.DecodeU32(results[0]), p.size, p.stack)
+}
+
+func (p *mallocProfiler) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ error) {
 }
 
 type callocProfiler struct {
@@ -240,17 +240,17 @@ type callocProfiler struct {
 	stack  stackTrace
 }
 
-func (p *callocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p *callocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
 	p.count = api.DecodeU32(params[0])
 	p.size = api.DecodeU32(params[1])
 	p.stack = makeStackTrace(p.stack, si)
-	return ctx
 }
 
-func (p *callocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
-	if err == nil {
-		p.memory.observeAlloc(api.DecodeU32(results[0]), p.count*p.size, p.stack)
-	}
+func (p *callocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
+	p.memory.observeAlloc(api.DecodeU32(results[0]), p.count*p.size, p.stack)
+}
+
+func (p *callocProfiler) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ error) {
 }
 
 type reallocProfiler struct {
@@ -260,18 +260,18 @@ type reallocProfiler struct {
 	stack  stackTrace
 }
 
-func (p *reallocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p *reallocProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
 	p.addr = api.DecodeU32(params[0])
 	p.size = api.DecodeU32(params[1])
 	p.stack = makeStackTrace(p.stack, si)
-	return ctx
 }
 
-func (p *reallocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
-	if err == nil {
-		p.memory.observeFree(p.addr)
-		p.memory.observeAlloc(api.DecodeU32(results[0]), p.size, p.stack)
-	}
+func (p *reallocProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
+	p.memory.observeFree(p.addr)
+	p.memory.observeAlloc(api.DecodeU32(results[0]), p.size, p.stack)
+}
+
+func (p *reallocProfiler) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ error) {
 }
 
 type freeProfiler struct {
@@ -279,15 +279,16 @@ type freeProfiler struct {
 	addr   uint32
 }
 
-func (p *freeProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p *freeProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
 	p.addr = api.DecodeU32(params[0])
-	return ctx
 }
 
-func (p *freeProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
-	if err == nil {
-		p.memory.observeFree(p.addr)
-	}
+func (p *freeProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ []uint64) {
+	p.memory.observeFree(p.addr)
+}
+
+func (p *freeProfiler) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ error) {
+	p.After(ctx, mod, def, nil)
 }
 
 type goRuntimeMallocgcProfiler struct {
@@ -296,7 +297,7 @@ type goRuntimeMallocgcProfiler struct {
 	stack  stackTrace
 }
 
-func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
 	imod := mod.(experimental.InternalModule)
 	mem := imod.Memory()
 
@@ -309,13 +310,16 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 	} else {
 		p.size = 0
 	}
-	return ctx
 }
 
-func (p *goRuntimeMallocgcProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
-	if err == nil && p.size != 0 {
+func (p *goRuntimeMallocgcProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ []uint64) {
+	if p.size != 0 {
 		// TODO: get the returned pointer
 		addr := uint32(0)
 		p.memory.observeAlloc(addr, p.size, p.stack)
 	}
+}
+
+func (p *goRuntimeMallocgcProfiler) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ error) {
+	p.After(ctx, mod, def, nil)
 }

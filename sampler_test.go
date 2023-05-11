@@ -25,10 +25,11 @@ func TestSampledFunctionListener(t *testing.T) {
 
 	function := module.Function(0).Definition()
 	listener := factory.NewFunctionListener(function)
+	ctx := context.Background()
 
 	for i := 0; i < 20; i++ {
-		ctx := listener.Before(context.Background(), module, function, nil, nil)
-		listener.After(ctx, module, function, nil, nil)
+		listener.Before(ctx, module, function, nil, nil)
+		listener.After(ctx, module, function, nil)
 	}
 
 	if n != 2 {

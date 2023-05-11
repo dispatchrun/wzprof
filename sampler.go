@@ -55,22 +55,27 @@ type sampledFunctionListener struct {
 	lstn experimental.FunctionListener
 }
 
-func (s *sampledFunctionListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, stack experimental.StackIterator) context.Context {
+func (s *sampledFunctionListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, stack experimental.StackIterator) {
 	bit := uint(0)
 
 	if s.count--; s.count == 0 {
 		s.count = s.cycle
+		s.lstn.Before(ctx, mod, def, params, stack)
 		bit = 1
-		ctx = s.lstn.Before(ctx, mod, def, params, stack)
 	}
 
 	s.stack.push(bit)
-	return ctx
 }
 
-func (s *sampledFunctionListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+func (s *sampledFunctionListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
 	if s.stack.pop() != 0 {
-		s.lstn.After(ctx, mod, def, err, results)
+		s.lstn.After(ctx, mod, def, results)
+	}
+}
+
+func (s *sampledFunctionListener) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error) {
+	if s.stack.pop() != 0 {
+		s.lstn.Abort(ctx, mod, def, err)
 	}
 }
 
