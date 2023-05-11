@@ -4,7 +4,7 @@
 
 # wzprof
 
-`wzprof`, pronounced as you think it should, is as pprof based profiler for
+`wzprof`, pronounced as you think it should, is a pprof based profiler for
 WebAssembly built on top of [**Wazero**](https://github.com/tetratelabs/wazero).
 It offers the ability to collect CPU and Memory profiles during the execution of
 WebAssembly modules.
