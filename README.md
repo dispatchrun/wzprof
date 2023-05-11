@@ -34,7 +34,7 @@ application performance.
 
 - CPU: calls sampling and on-CPU time.
 - Memory: allocations (see below).
-- DWARF support (demangling, source-level profiling)
+- DWARF support (demangling, source-level profiling).
 - Integrated pprof server.
 - Library and CLI interfaces.
 

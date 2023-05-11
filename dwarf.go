@@ -56,23 +56,10 @@ func newDwarfmapper(sections []api.CustomSection) (*dwarfmapper, error) {
 		}
 	}
 
-	if info == nil {
-		return nil, fmt.Errorf("dwarf: missing section: .debug_info")
+	d, err := dwarf.New(abbrev, nil, nil, info, line, nil, ranges, str)
+	if err != nil {
+		return nil, fmt.Errorf("dwarf: %w", err)
 	}
-	if line == nil {
-		return nil, fmt.Errorf("dwarf: missing section: .debug_line")
-	}
-	if str == nil {
-		return nil, fmt.Errorf("dwarf: missing section: .debug_str")
-	}
-	if abbrev == nil {
-		return nil, fmt.Errorf("dwarf: missing section: .debug_abbrev")
-	}
-	if ranges == nil {
-		return nil, fmt.Errorf("dwarf: missing section: .debug_ranges")
-	}
-
-	d, _ := dwarf.New(abbrev, nil, nil, info, line, nil, ranges, str)
 
 	r := d.Reader()
 
