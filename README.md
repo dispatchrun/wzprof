@@ -9,6 +9,11 @@ WebAssembly built on top of [**Wazero**](https://github.com/tetratelabs/wazero).
 It offers the ability to collect CPU and Memory profiles during the execution of
 WebAssembly modules.
 
+If you are interested in taking a deep-dive into how `wzprof` is built,
+you might enjoy reading:
+
+👉 [**Performance in the spotlight: WebAssembly profiling for everyone**](https://blog.stealthrocket.tech/performance-in-the-spotlight-webassembly-profiling-for-everyone)
+
 ## Motivation
 
 WebAssembly runtimes typically allow profiling guest code via an external
