@@ -190,7 +190,7 @@ func (p *CPUProfiler) NewFunctionListener(def api.FunctionDefinition) experiment
 
 type cpuProfiler struct{ *CPUProfiler }
 
-func (p cpuProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) context.Context {
+func (p cpuProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ []uint64, si experimental.StackIterator) {
 	var frame cpuTimeFrame
 	p.mutex.Lock()
 
@@ -212,10 +212,9 @@ func (p cpuProfiler) Before(ctx context.Context, mod api.Module, def api.Functio
 
 	p.mutex.Unlock()
 	p.frames = append(p.frames, frame)
-	return ctx
 }
 
-func (p cpuProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error, results []uint64) {
+func (p cpuProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ []uint64) {
 	i := len(p.frames) - 1
 	f := p.frames[i]
 	p.frames = p.frames[:i]
@@ -228,4 +227,8 @@ func (p cpuProfiler) After(ctx context.Context, mod api.Module, def api.Function
 		p.mutex.Unlock()
 		p.traces = append(p.traces, f.trace)
 	}
+}
+
+func (p cpuProfiler) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ error) {
+	p.After(ctx, mod, def, nil)
 }
