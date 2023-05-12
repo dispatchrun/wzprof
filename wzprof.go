@@ -1,7 +1,6 @@
 package wzprof
 
 import (
-	"bytes"
 	"fmt"
 	"hash/maphash"
 	"net/http"
@@ -186,20 +185,16 @@ func (sc *stackCounter) total() int64 {
 	return sc.value[1]
 }
 
-func (sc *stackCounter) subtract(value int64) {
-	if total := sc.total(); total < value {
-		sc.value[1] = 0
-	} else {
-		sc.value[1] -= value
-	}
-}
-
 func (sc *stackCounter) sampleLocation() stackTrace {
 	return sc.stack
 }
 
 func (sc *stackCounter) sampleValue() []int64 {
 	return sc.value[:]
+}
+
+func (sc *stackCounter) String() string {
+	return fmt.Sprintf("{count:%d,total:%d}", sc.count(), sc.total())
 }
 
 // Compile-time check that program counters are uint64 values.
@@ -233,21 +228,6 @@ func makeStackTrace(st stackTrace, si experimental.StackIterator) stackTrace {
 
 func (st stackTrace) host() bool {
 	return len(st.fns) > 0 && st.fns[0].Definition().GoFunction() != nil
-}
-
-func (st stackTrace) contains(sx stackTrace) bool {
-	if len(st.fns) < len(sx.fns) {
-		return false
-	}
-	n := len(st.fns) - len(sx.fns)
-	st.fns = st.fns[n:]
-	st.pcs = st.pcs[n:]
-	if st.fns[0] != sx.fns[0] {
-		return false
-	}
-	st.pcs = st.pcs[1:]
-	sx.pcs = sx.pcs[1:]
-	return bytes.Equal(st.bytes(), sx.bytes())
 }
 
 func (st stackTrace) len() int {

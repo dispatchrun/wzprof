@@ -50,6 +50,7 @@ func TimeFunc(time func() int64) CPUProfilerOption {
 
 type cpuTimeFrame struct {
 	start int64
+	sub   int64
 	trace stackTrace
 }
 
@@ -99,11 +100,6 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 		for k, sample := range samples {
 			if sample.stack.host() {
 				delete(samples, k)
-				for _, other := range samples {
-					if sample.stack.contains(other.stack) {
-						other.subtract(sample.total())
-					}
-				}
 			}
 		}
 	}
@@ -220,9 +216,14 @@ func (p cpuProfiler) After(ctx context.Context, mod api.Module, def api.Function
 	p.frames = p.frames[:i]
 
 	if f.start != 0 {
+		duration := p.time() - f.start
+		if i := len(p.frames); i > 0 {
+			p.frames[i-1].sub += duration
+		}
+		duration -= f.sub
 		p.mutex.Lock()
 		if p.counts != nil {
-			p.counts.observe(f.trace, p.time()-f.start)
+			p.counts.observe(f.trace, duration)
 		}
 		p.mutex.Unlock()
 		p.traces = append(p.traces, f.trace)
