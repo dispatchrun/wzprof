@@ -23,18 +23,19 @@ func Sample(sampleRate float64, factory experimental.FunctionListenerFactory) ex
 	if sampleRate >= 1 {
 		return factory
 	}
-	sampler := new(sampler)
-	sampler.cycle = uint64(math.Ceil(1 / sampleRate))
-	sampler.count = sampler.cycle
+	cycle := uint32(math.Ceil(1 / sampleRate))
 	return experimental.FunctionListenerFactoryFunc(func(def api.FunctionDefinition) experimental.FunctionListener {
 		lstn := factory.NewFunctionListener(def)
 		if lstn == nil {
 			return nil
 		}
-		return &sampledFunctionListener{
-			sampler: sampler,
-			lstn:    lstn,
+		sampled := &sampledFunctionListener{
+			cycle: cycle,
+			count: cycle,
+			lstn:  lstn,
 		}
+		sampled.stack.bits = sampled.bits[:]
+		return sampled
 	})
 }
 
@@ -44,15 +45,12 @@ func (emptyFunctionListenerFactory) NewFunctionListener(api.FunctionDefinition) 
 	return nil
 }
 
-type sampler struct {
-	count uint64
-	cycle uint64
-	stack bitstack
-}
-
 type sampledFunctionListener struct {
-	*sampler
-	lstn experimental.FunctionListener
+	count uint32
+	cycle uint32
+	bits  [1]uint64
+	stack bitstack
+	lstn  experimental.FunctionListener
 }
 
 func (s *sampledFunctionListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, stack experimental.StackIterator) {
@@ -80,8 +78,8 @@ func (s *sampledFunctionListener) Abort(ctx context.Context, mod api.Module, def
 }
 
 type bitstack struct {
-	bits []uint64
 	size uint
+	bits []uint64
 }
 
 func (s *bitstack) push(bit uint) {

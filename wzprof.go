@@ -271,7 +271,7 @@ type sampleType interface {
 	sampleValue() []int64
 }
 
-func buildProfile[T sampleType](sampleRate float64, symbols Symbolizer, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType) *profile.Profile {
+func buildProfile[T sampleType](symbols Symbolizer, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType, ratios []float64) *profile.Profile {
 	prof := &profile.Profile{
 		SampleType:    sampleType,
 		Sample:        make([]*profile.Sample, 0, len(samples)),
@@ -325,8 +325,8 @@ func buildProfile[T sampleType](sampleRate float64, symbols Symbolizer, samples 
 		prof.Function[fn.ID-1] = fn
 	}
 
-	if sampleRate < 1 {
-		prof.Scale(1 / sampleRate)
+	if err := prof.ScaleN(ratios[:len(sampleType)]); err != nil {
+		panic(err)
 	}
 	return prof
 }

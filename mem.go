@@ -67,7 +67,10 @@ func NewMemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
 // NewProfile takes a snapshot of the current memory allocation state and builds
 // a profile representing the state of the program memory.
 func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
-	return buildProfile(sampleRate, symbols, p.snapshot(), p.start, time.Since(p.start), p.SampleType())
+	ratio := 1 / sampleRate
+	return buildProfile(symbols, p.snapshot(), p.start, time.Since(p.start), p.SampleType(),
+		[]float64{ratio, ratio, ratio, ratio},
+	)
 }
 
 // Name returns "allocs" to match the name of the memory profiler in pprof.
