@@ -104,7 +104,14 @@ func (p *CPUProfiler) StopProfile(sampleRate float64, symbols Symbolizer) *profi
 		}
 	}
 
-	return buildProfile(sampleRate, symbols, samples, start, duration, p.SampleType())
+	ratios := []float64{
+		1 / sampleRate,
+		// Time values are not influenced by the sampling rate so we don't have
+		// to scale them out.
+		1,
+	}
+
+	return buildProfile(symbols, samples, start, duration, p.SampleType(), ratios)
 }
 
 // Name returns "profile" to match the name of the CPU profiler in pprof.
