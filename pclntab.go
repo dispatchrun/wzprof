@@ -14,15 +14,17 @@ func moduleIsGo(mod wazero.CompiledModule) bool {
 	return false
 }
 
-// wasmbinData parses a WASM binary and returns the bytes of the WASM "Data"
-// section. Returns nil if the section does not exist.
+// wasmbin parses a WASM binary and returns the bytes of the WASM "Code" and
+// "Data" sections. Returns nils if the sections do not exist.
 //
 // It is a very weak parser: it should be called on a valid module or it may
 // panic.
 //
-// This function exists because Wazero doesn't expose the Data section on its
-// CompiledModule and it is needed to retrieve pclntab on Go-compiled modules.
-func wasmbinData(b []byte) []byte {
+// This function exists because Wazero doesn't expose the Code and Data sections
+// on its CompiledModule and they are needed to retrieve pclntab on Go-compiled
+// modules.
+func wasmbinSections(b []byte) (code, data []byte) {
+	const codeSectionId = 10
 	const dataSectionId = 11
 
 	b = b[8:] // skip magic+version
@@ -31,23 +33,17 @@ func wasmbinData(b []byte) []byte {
 		b = b[1:]
 		length, n := binary.Uvarint(b)
 		b = b[n:]
-		if id == dataSectionId {
-			return b[:length]
+		switch id {
+		case codeSectionId:
+			code = b[:length]
+		case dataSectionId:
+			data = b[:length]
+			return // Data section is just after Code.
 		}
 		b = b[length:]
 	}
-	return nil
+	return nil, nil
 }
-
-// godebugSections returns the symtab and pclntab segments from the provided
-// bytes of the Data section. Assumes the section is well formed, and the
-// segments are positioned at the layout described in the linker. If either
-// segment is missing, this function returns nil,nil. It does not check whether
-// symtab and pclntab contains actual useful data.
-//
-// See layout in the linker: https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L169-L185
-//
-// See https://docs.google.com/document/d/1lyPIbmsYbXnpNj57a261hgOYVpNRcgydurVQIyZOz_o/pub for 0xfffffffb
 
 // dataIterator iterates over the segments contained in a wasm Data section.
 // Only support mode 0 (memory 0 + offset) segments.
@@ -190,6 +186,12 @@ func (d *dataIterator) SkipToDataOffset(offset int) (int64, []byte) {
 
 // pclntabFromData rebuilds the full pclntab from the segments of the Data
 // section of the module (b).
+//
+// Assumes the section is well formed, and the segment has the layout described
+// in the 1.20.1 linker. Returns nil if the segment is missing. Does not check
+// whether pclntab contains actual useful data.
+//
+// See layout in the linker: https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L169-L185
 func pclntabFromData(b []byte) []byte {
 	// magic number of the start of pclntab for Go 1.20, little endian.
 	magic := []byte{0xf1, 0xff, 0xff, 0xff, 0x00, 0x00}
@@ -348,13 +350,50 @@ func (m *vmem) CopyAtAddress(addr int64, b []byte) {
 	}
 }
 
+type fnRange struct {
+	OffsetStart uint64
+	OffsetEnd   uint64
+	FnID        uint64
+}
+
+type codemap struct {
+	// TODO: slice of offset ends is enough.
+	fns []fnRange
+}
+
+func buildCodemap(b []byte) codemap {
+	// https://webassembly.github.io/spec/core/binary/modules.html#binary-codesec
+	offset := uint64(0)
+	count, n := binary.Uvarint(b)
+	b = b[n:]
+	offset += uint64(n)
+	fns := make([]fnRange, count)
+
+	for i := 0; i < int(count); i++ {
+		fns[i].FnID = uint64(i)
+		fns[i].OffsetStart = offset
+		size, n := binary.Uvarint(b)
+		b = b[n+int(size):]
+		offset += uint64(n) + uint64(size)
+		fns[i].OffsetEnd = offset
+	}
+
+	if len(b) != 0 {
+		panic("leftover bytes")
+	}
+
+	return codemap{fns: fns}
+}
+
 type pclntabmapper struct {
+	m       codemap
 	t       *gosym.Table
 	pcstart uint64
 }
 
 func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
-	data := wasmbinData(wasmbin)
+	code, data := wasmbinSections(wasmbin)
+	codemap := buildCodemap(code)
 	pclntab := pclntabFromData(data)
 
 	lt := gosym.NewLineTable(pclntab, 0)
@@ -362,19 +401,33 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(t.Objs[0])
 	fmt.Println("func len:", len(t.Funcs))
 	pcstart := t.Funcs[0].Entry
-	return pclntabmapper{t: t, pcstart: pcstart}, nil
+	return pclntabmapper{
+		m:       codemap,
+		t:       t,
+		pcstart: pcstart,
+	}, nil
 }
 
 func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
-	// https://github.com/stealthrocket/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/compile/internal/wasm/ssa.go#L331-L338
-	// Caller PC is stored 8 bytes below first parameter.
-	pc := offset
-	file, line, fn := p.t.PCToLine(pc + p.pcstart)
+	var pc uint64
+
+	// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L45
+	const funcValueOffset = 0x1000
+
+	for _, f := range p.m.fns {
+		if f.OffsetStart <= offset && offset < f.OffsetEnd {
+			// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L142-L158
+			pcF := (funcValueOffset + f.FnID) << 16
+			pcB := offset - f.OffsetStart
+			pc = pcF | pcB
+			break
+		}
+	}
+
+	file, line, fn := p.t.PCToLine(pc)
 	if fn == nil {
-		fmt.Println("could not lookup", pc)
 		return nil
 	}
 
