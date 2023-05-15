@@ -368,9 +368,10 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	return pclntabmapper{t: t, pcstart: pcstart}, nil
 }
 
-func (p pclntabmapper) LocationsForPC(pc uint64) []Location {
+func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 	// https://github.com/stealthrocket/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/compile/internal/wasm/ssa.go#L331-L338
 	// Caller PC is stored 8 bytes below first parameter.
+	pc := offset
 	file, line, fn := p.t.PCToLine(pc + p.pcstart)
 	if fn == nil {
 		fmt.Println("could not lookup", pc)
@@ -378,9 +379,9 @@ func (p pclntabmapper) LocationsForPC(pc uint64) []Location {
 	}
 
 	return []Location{{
-		File: file,
-		Line: int64(line),
-		PC:   pc,
+		File:         file,
+		Line:         int64(line),
+		SourceOffset: pc,
 		// TODO: names
 	}}
 }

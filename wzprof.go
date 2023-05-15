@@ -227,25 +227,6 @@ func makeStackTrace(st stackTrace, si experimental.StackIterator) stackTrace {
 	return st
 }
 
-func makeGoStackTrace(pc uint64, st stackTrace, si experimental.StackIterator) stackTrace {
-	st.fns = st.fns[:0]
-	st.pcs = st.pcs[:0]
-
-	first := true
-	fmt.Println("STARTING TO MAKE STACK TRACE")
-	for si.Next() {
-		if !first {
-			pc = si.SourceOffset()
-		}
-		fmt.Println("MAKING GO STACK TRACE:", pc, first)
-		first = false
-		st.fns = append(st.fns, si.FunctionDefinition())
-		st.pcs = append(st.pcs, pc)
-	}
-	st.key = maphash.Bytes(stackTraceHashSeed, st.bytes())
-	return st
-}
-
 func (st stackTrace) host() bool {
 	return len(st.fns) > 0 && st.fns[0].Definition().GoFunction() != nil
 }

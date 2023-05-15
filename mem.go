@@ -307,23 +307,9 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 	sp := int32(imod.Global(0).Get())
 	offset := sp + 8*(int32(0)+1) // +1 for the return address
 	b, ok := mem.Read(uint32(offset), 8)
-
 	if ok {
 		p.size = binary.LittleEndian.Uint32(b)
-		// TODO: HACK
-
-		offset := sp + 8*(int32(0)-1) // caller pc is 8 bytes below sp
-		b, ok = mem.Read(uint32(offset), 8)
-		if !ok {
-			panic("WHAT")
-		}
-		pc := binary.LittleEndian.Uint32(b)
-		pc2 := binary.LittleEndian.Uint64(b)
-		if uint64(pc) != pc2 {
-			panic("INVALID")
-		}
-
-		p.stack = makeGoStackTrace(pc2, p.stack, si)
+		p.stack = makeStackTrace(p.stack, si)
 	} else {
 		p.size = 0
 	}
