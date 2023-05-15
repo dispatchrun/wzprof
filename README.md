@@ -58,6 +58,14 @@ To use the library as code in a Go program:
 go get github.com/stealthrocket/wzprof@latest
 ```
 
+### Sampling 
+
+By default, wzprof will sample calls with a ratio of 1/19. Sampling is used to
+limit the overhead of the profilers but the default rate might not be suitable 
+in some cases. 
+For example, if your processes are short running and you don't see anything in the 
+profile, you might want to disable the sampling. To do so, use `-sample 1`.
+
 ### Run program to completion with CPU or memory profiling
 
 In those examples we set the sample rate to 1 to capture all samples because the
