@@ -358,8 +358,316 @@ type fnRange struct {
 
 type codemap struct {
 	// TODO: slice of offset ends is enough.
-	fns []fnRange
+	fns    []fnRange
+	fnmaps []funcmap
 }
+
+// Return the index of the first needle opcode in this block. Ignores opcodes
+// inside nested blocks. -1 if not found.
+func findInBlock(needle []byte, hay []byte) int {
+	i := 0
+	for i+len(needle) < len(hay) {
+		b := hay[i:]
+		if bytes.HasPrefix(b, needle) {
+			return i
+		}
+
+		// end of the current block
+		if b[0] == 0x0B {
+			i++
+			break
+		}
+
+		i += skipInstr(b)
+	}
+	return -1
+}
+
+func skipInstr(b []byte) int {
+	if len(b) == 0 {
+		return 0
+	}
+	o := b[0]
+	i := 1
+
+	if o >= 0x45 && o <= 0xC4 {
+		// no argument
+		return i
+	}
+
+	switch o {
+	// No argument.
+	case 0x00, 0x01, 0x0F, 0xD1, 0x1A, 0x1B:
+
+	case 0x02: // block
+		_, n := sleb128(33, b[i:]) // blocktype
+		i += n
+		i += skipExpr(b[i:])
+
+	case 0x03:
+		_, n := sleb128(33, b[i:]) // blocktype
+		i += n
+		i += skipExpr(b[i:])
+	case 0x04:
+		_, n := sleb128(33, b[i:]) // blocktype
+		i += n
+		i += skipIf(b[i:])
+
+	// 1 u32 argument
+	case 0x0C, 0x0D, 0x10, 0xD2, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26:
+		_, n := binary.Uvarint(b[i:])
+		i += n
+
+	// 1 s32 arg
+	case 0x41:
+		_, n := sleb128(32, b[i:])
+		i += n
+	// 1 s64 arg
+	case 0x42:
+		_, n := sleb128(64, b[i:])
+		i += n
+
+	// br_table
+	case 0x0E:
+		c, n := binary.Uvarint(b[i:])
+		i += n
+		for j := 0; j < int(c); j++ {
+			_, n := binary.Uvarint(b[i:])
+			i += n
+		}
+		_, n = binary.Uvarint(b[i:])
+		i += n
+
+	// 2 u32 arguments
+	case 0x11, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E:
+		_, n := binary.Uvarint(b[i:])
+		i += n
+		_, n = binary.Uvarint(b[i:])
+		i += n
+
+	// 1 byte argument
+	case 0xD0:
+		i++
+
+	// vector of bytes
+	case 0x1C:
+		x, n := binary.Uvarint(b[i:])
+		i += n + int(x)
+
+	case 0xFC:
+		x, n := binary.Uvarint(b[i:])
+		i += n
+		switch x {
+		case 12, 14:
+			_, n := binary.Uvarint(b[i:])
+			i += n
+			_, n = binary.Uvarint(b[i:])
+			i += n
+		default:
+			_, n := binary.Uvarint(b[i:])
+			i += n
+		}
+	default:
+		panic(fmt.Errorf("unhandled opcode: %x", o))
+	}
+	return i
+}
+
+func skipIf(b []byte) int {
+	i := 0
+	for len(b) > 1 {
+		if b[i] == 0x05 {
+			i++
+			continue
+		}
+		if b[i] == 0x0B {
+			i++
+			break
+		}
+		i += skipInstr(b[i:])
+	}
+	return i
+}
+
+// returns how many bytes were skipped
+func skipExpr(b []byte) int {
+	i := 0
+	for len(b) > 1 {
+		if b[i] == 0x0B {
+			i++
+			return i
+		}
+		i += skipInstr(b[i:])
+	}
+	return i
+}
+
+type funcmap struct {
+	Start uint64 // offset from start of Code
+	End   uint64 // offset from start of Code
+
+	Frame  int
+	Jumps  []int    // maps PC_B to block number
+	Blocks [][2]int // [start (offset from fnstart), end (offset from fnstart)]
+
+	// for debugging
+	ID int
+}
+
+func parseFnCode(b []byte, startfunc int) funcmap {
+	if len(b) < 6 {
+		// Need at least these instructions to have a non 0 frame:
+		// 01 7f       | local[0] type=i32
+		// 23 00       | global.get 0
+		// 21 01       | local.set 1
+		// And those for a jump table:
+		// 02 40       | block
+		// 0e 01 00 01 | br_table 0 1
+		// 0b          | end
+		return funcmap{}
+	}
+	offset := 0
+
+	// start with locals
+	localsCount, n := binary.Uvarint(b)
+	b = b[n:]
+	offset += n
+	for i := 0; i < int(localsCount); i++ {
+		_, n := binary.Uvarint(b) // count of locals of that type
+		b = b[n+1:]               // +1 because valtype is 1 byte
+		offset += n + 1
+	}
+
+	if len(b) < 4 {
+		return funcmap{}
+	}
+
+	// 23 00       | global.get 0
+	// 21 01       | local.set 1
+	if len(b) < 4 {
+		return funcmap{}
+	}
+	b = b[4:]
+	offset += 4
+
+	fmt.Printf("\taddress of first block: %x\n", offset+startfunc)
+
+	// 12e697: 02 40                      | block
+	// 12e699: 02 40                      |   block
+	// 12e69b: 02 40                      |     block
+	// 12e69d: 02 40                      |       block
+	// 12e69f: 02 40                      |         block
+	// 12e6a1: 02 40                      |           block
+	// 12e6a3: 02 40                      |             block
+	// 12e6a5: 20 00                      |               local.get 0
+	// 12e6a7: 0e 12 00 00 00 00 00 00 00 |               br_table 0 0 0 0 0 0 0 1 1 2 3 3 3 3 3 3 4 4 5
+	// 12e6b0: 01 01 02 03 03 03 03 03 03 |
+	// 12e6b9: 04 04 05                   |
+	// 12e6bc: 0b                         |             end
+
+	fm := funcmap{}
+	blockDepth := 0
+	for len(b) >= 3 { // 02 40 ... 0b
+		if b[0] == 0x02 && b[1] == 0x40 {
+			blockDepth++
+			b = b[2:]
+			offset += 2
+			continue
+		}
+		if b[0] == 0x20 && b[1] == 0x00 && b[2] == 0x0E {
+			fm.Blocks = make([][2]int, blockDepth)
+
+			fm.Blocks[len(fm.Blocks)-blockDepth][0] = offset
+			b = b[3:]
+			offset += 3
+			// expect br_table
+			x, n := binary.Uvarint(b)
+			b = b[n:]
+			offset += n
+			fm.Jumps = make([]int, x)
+			for i := 0; i < int(x); i++ {
+				v, n := binary.Uvarint(b)
+				b = b[n:]
+				offset += n
+				fm.Jumps[i] = int(v)
+				if int(v) > len(fm.Blocks)-1 {
+					fmt.Println("warning: jump table pointing to unknown block")
+				}
+			}
+			_, n = binary.Uvarint(b)
+			b = b[n:]
+			offset += n
+
+			// expect end
+			if b[0] != 0x0B {
+				return funcmap{}
+			}
+			b = b[1:]
+			offset += 1
+			fm.Blocks[len(fm.Blocks)-blockDepth][1] = startfunc + offset
+			blockDepth--
+			fm.Blocks[len(fm.Blocks)-blockDepth][0] = startfunc + offset
+			break
+		}
+		// unknown pattern, bail
+		return funcmap{}
+	}
+
+	// Look forward to find the `local.tee 1` in this block, skipping over
+	// inside blocks (such as ifs).
+	//	fmt.Printf("start at: %x\n", offset+startfunc)
+	i := findInBlock([]byte{0x22, 0x01}, b)
+
+	if i >= 0 {
+		//		fmt.Printf("found local.tee at: %x\n", offset+startfunc+i)
+		// 12e6e8: 20 01                      |             local.get 1
+		// 12e6ea: 41 f0 00                   |             i32.const 112
+		// 12e6ed: 6b                         |             i32.sub
+		// 12e6ee: 22 01                      |             local.tee 1
+		// 12e6f0: 24 00                      |             global.set 0
+
+		// backtrack until the start of i32.const
+		i--
+		i-- // i32.sub (0x6B)
+		i-- // the last byte of the operand
+		for ; i > 0; i-- {
+			if b[i] == 0x41 {
+				break
+			}
+			if b[i]&0x80 == 0 {
+				fmt.Println("warning: only continuation bytes are expected until 0x41")
+				// TODO: still try to fix blocks
+				return funcmap{}
+			}
+		}
+		// i now points to 0x41.
+		i++
+		size, n := sleb128(32, b[i:])
+		fm.Frame = int(size)
+		i += n
+		b = b[i:]
+		offset += i
+	}
+	for blockDepth > 0 {
+		i = findInBlock([]byte{0x0B}, b)
+		if i < 0 {
+			panic("unfinished block")
+		}
+		b = b[i+1:]
+		offset += i + 1 // +1 to include the end opcode.
+
+		fm.Blocks[len(fm.Blocks)-blockDepth][1] = startfunc + offset
+		blockDepth--
+		if blockDepth > 0 {
+			fm.Blocks[len(fm.Blocks)-blockDepth][0] = startfunc + offset
+		}
+	}
+
+	return fm
+}
+
+//
+// https://github.com/stealthrocket/go/blob/7213f2e72003325df2cebb731de838ac01f20fb6/src/cmd/internal/obj/wasm/wasmobj.go#L357-L364
 
 func buildCodemap(b []byte) codemap {
 	// https://webassembly.github.io/spec/core/binary/modules.html#binary-codesec
@@ -368,21 +676,44 @@ func buildCodemap(b []byte) codemap {
 	b = b[n:]
 	offset += uint64(n)
 	fns := make([]fnRange, count)
+	fnmaps := make([]funcmap, 0, count)
 
 	for i := 0; i < int(count); i++ {
 		fns[i].FnID = uint64(i)
 		fns[i].OffsetStart = offset
 		size, n := binary.Uvarint(b)
-		b = b[n+int(size):]
+		offset += uint64(n)
+		b = b[n:]
+		fncode := b[:int(size)]
+
+		const codeSecOffset = 0x001277
+		fnmap := parseFnCode(fncode, int(offset))
+		fnmap.ID = i
+		fnmap.Start = offset
+		fmt.Printf("func[%d] at %x :: framesize=%d\n", fnmap.ID+14, fnmap.Start+codeSecOffset, fnmap.Frame)
+		if len(fnmap.Jumps) > 0 {
+			fmt.Printf("\tJumps:")
+			for i, x := range fnmap.Jumps {
+				fmt.Printf(" %d->%d", i, x)
+			}
+			fmt.Println("")
+		}
+		for i, block := range fnmap.Blocks {
+			fmt.Printf("\tBlock %d: %x -> %x\n", i, codeSecOffset+fnmap.Start+uint64(block[0]), codeSecOffset+fnmap.Start+uint64(block[1]))
+		}
+
+		b = b[int(size):]
 		offset += uint64(n) + uint64(size)
 		fns[i].OffsetEnd = offset
+		fnmap.End = offset
+		fnmaps = append(fnmaps, fnmap)
 	}
 
 	if len(b) != 0 {
 		panic("leftover bytes")
 	}
 
-	return codemap{fns: fns}
+	return codemap{fns: fns, fnmaps: fnmaps}
 }
 
 type pclntabmapper struct {
@@ -416,11 +747,32 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 	// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L45
 	const funcValueOffset = 0x1000
 
-	for _, f := range p.m.fns {
-		if f.OffsetStart <= offset && offset < f.OffsetEnd {
+	for _, f := range p.m.fnmaps {
+		if f.Start <= offset && offset < f.End {
 			// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L142-L158
-			pcF := (funcValueOffset + f.FnID) << 16
-			pcB := offset - f.OffsetStart
+			pcF := funcValueOffset + uint64(f.ID)<<16
+
+			blockNum := -1
+			for i, b := range f.Blocks {
+				if b[0] <= int(offset) && int(offset) < b[1] {
+					blockNum = i
+					break
+				}
+			}
+			if blockNum == -1 {
+				fmt.Println("warning: matched function but not block")
+				return nil
+			}
+
+			pcB := uint64(0)
+			for x, blk := range f.Jumps {
+				if blk == blockNum {
+					pcB = uint64(x)
+					break
+				}
+			}
+
+			//			pcB := offset - f.OffsetStart
 			pc = pcF | pcB
 			break
 		}
