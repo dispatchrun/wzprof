@@ -10,7 +10,8 @@ import (
 )
 
 func moduleIsGo(mod wazero.CompiledModule) bool {
-	// TODO
+	// TODO: need to figure out a reliable way that this code has been generated
+	// by golang/go.
 	return false
 }
 
@@ -28,7 +29,7 @@ func (s section) Valid() bool {
 // wasmbin parses a WASM binary and returns the bytes of the WASM "Code" and
 // "Data" sections. Returns nils if the sections do not exist.
 //
-// It is a very weak parser: it should be called on a valid module or it may
+// It is a very weak parser: it should be called on a valid module, or it may
 // panic.
 //
 // This function exists because Wazero doesn't expose the Code and Data sections
@@ -135,8 +136,8 @@ func (d *dataIterator) uvarint() uint64 {
 	return x
 }
 
-// Return the bytes of the next segment, and its offset in virtual memory, or a
-// nil slice if there is no more segment.
+// Next returns the bytes of the following segment, and its offset in virtual
+// memory, or a nil slice if there are no more segment.
 func (d *dataIterator) Next() (offset int64, seg []byte) {
 	if d.n == 0 {
 		return 0, nil
@@ -204,7 +205,7 @@ func (d *dataIterator) SkipToDataOffset(offset int) (int64, []byte) {
 // pclntabFromData rebuilds the full pclntab from the segments of the Data
 // section of the module (b).
 //
-// Assumes the section is well formed, and the segment has the layout described
+// Assumes the section is well-formed, and the segment has the layout described
 // in the 1.20.1 linker. Returns nil if the segment is missing. Does not check
 // whether pclntab contains actual useful data.
 //
@@ -375,8 +376,6 @@ type fnRange struct {
 }
 
 type codemap struct {
-	// TODO: slice of offset ends is enough.
-	fns    []fnRange
 	fnmaps []funcmap
 }
 
@@ -413,6 +412,7 @@ func skipInstr(b []byte) int {
 		return i
 	}
 
+	// TODO: handle missing opcodes
 	switch o {
 	// No argument.
 	case 0x00, 0x01, 0x0F, 0xD1, 0x1A, 0x1B:
@@ -701,13 +701,9 @@ func buildCodemap(code section) codemap {
 	b = b[n:]
 	offset += uint64(n)
 
-	fns := make([]fnRange, count)
 	fnmaps := make([]funcmap, 0, count)
 
 	for i := 0; i < int(count); i++ {
-		fns[i].FnID = uint64(i)
-		fns[i].OffsetStart = offset
-
 		size, n := binary.Uvarint(b)
 		offset += uint64(n)
 		b = b[n:]
@@ -720,7 +716,6 @@ func buildCodemap(code section) codemap {
 		b = b[int(size):]
 		offset += size
 
-		fns[i].OffsetEnd = offset
 		fnmap.End = offset
 		fnmaps = append(fnmaps, fnmap)
 
@@ -741,7 +736,7 @@ func buildCodemap(code section) codemap {
 		panic("leftover bytes")
 	}
 
-	return codemap{fns: fns, fnmaps: fnmaps}
+	return codemap{fnmaps: fnmaps}
 }
 
 type pclntabmapper struct {
@@ -828,7 +823,7 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 				return nil
 			}
 
-			pcB := uint64(0)
+			pcB := uint64(len(f.Blocks)) // default to any PC_B not registered to a block.
 			for x, blk := range f.Jumps {
 				if blk == blockNum {
 					pcB = uint64(x)
