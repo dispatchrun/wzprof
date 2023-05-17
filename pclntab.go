@@ -734,6 +734,22 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	}
 	fmt.Println("func len:", len(t.Funcs))
 	pcstart := t.Funcs[0].Entry
+
+	const funcValueOffset = 0x1000
+	for fn := 0; fn <= 1337-14; fn++ {
+		m := 6
+		if fn == 1323 {
+			m = 100
+		}
+		for pcb := 0; pcb <= m; pcb++ {
+			pc := (funcValueOffset+uint64(fn))<<16 | uint64(pcb)
+			fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", fn, pcb, pc)
+			file, line, _ := t.PCToLine(pc)
+			fmt.Println(file, line)
+		}
+	}
+	panic("STOP")
+
 	return pclntabmapper{
 		m:       codemap,
 		t:       t,
@@ -746,11 +762,18 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 
 	// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L45
 	const funcValueOffset = 0x1000
+	/*
+		for idx, f := range p.m.fnmaps {
+			fmt.Println("->", idx, f.ID, len(f.Blocks))
+		}
+	*/
 
-	for _, f := range p.m.fnmaps {
+	for idx, f := range p.m.fnmaps {
 		if f.Start <= offset && offset < f.End {
 			// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L142-L158
-			pcF := funcValueOffset + uint64(f.ID)<<16
+			pcF := (funcValueOffset + uint64(f.ID)) << 16
+
+			fmt.Println("matched fn", f.ID, len(f.Blocks))
 
 			blockNum := -1
 			for i, b := range f.Blocks {
@@ -761,6 +784,9 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 			}
 			if blockNum == -1 {
 				fmt.Println("warning: matched function but not block")
+				fmt.Println(idx)
+				fmt.Println(offset)
+				fmt.Println(len(f.Blocks))
 				return nil
 			}
 
@@ -772,7 +798,6 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 				}
 			}
 
-			//			pcB := offset - f.OffsetStart
 			pc = pcF | pcB
 			break
 		}
