@@ -82,6 +82,7 @@ func locationForCall(symbols Symbolizer, def api.FunctionDefinition, offset uint
 
 	fmt.Println(def.Name())
 	if symbols != nil && offset > 0 {
+		fmt.Printf("resolving %d (%#x) [%x] for %s\n", offset, offset, offset+codeSecOffset, def.Name())
 		locations = symbols.LocationsForSourceOffset(offset)
 		symbolFound = len(locations) > 0
 	}

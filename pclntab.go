@@ -14,6 +14,17 @@ func moduleIsGo(mod wazero.CompiledModule) bool {
 	return false
 }
 
+type section struct {
+	// Offset since start of binary of the first byte of the section (after the
+	// section size).
+	Offset uint64
+	Data   []byte
+}
+
+func (s section) Valid() bool {
+	return s.Data != nil
+}
+
 // wasmbin parses a WASM binary and returns the bytes of the WASM "Code" and
 // "Data" sections. Returns nils if the sections do not exist.
 //
@@ -23,26 +34,32 @@ func moduleIsGo(mod wazero.CompiledModule) bool {
 // This function exists because Wazero doesn't expose the Code and Data sections
 // on its CompiledModule and they are needed to retrieve pclntab on Go-compiled
 // modules.
-func wasmbinSections(b []byte) (code, data []byte) {
+func wasmbinSections(b []byte) (code, data section) {
 	const codeSectionId = 10
 	const dataSectionId = 11
 
+	offset := uint64(0)
+
 	b = b[8:] // skip magic+version
+	offset += 8
 	for len(b) > 0 {
 		id := b[0]
 		b = b[1:]
+		offset++
 		length, n := binary.Uvarint(b)
 		b = b[n:]
+		offset += uint64(n)
 		switch id {
 		case codeSectionId:
-			code = b[:length]
+			code = section{offset, b[:length]}
 		case dataSectionId:
-			data = b[:length]
+			data = section{offset, b[:length]}
 			return // Data section is just after Code.
 		}
 		b = b[length:]
+		offset += length
 	}
-	return nil, nil
+	return section{}, section{}
 }
 
 // dataIterator iterates over the segments contained in a wasm Data section.
@@ -192,7 +209,8 @@ func (d *dataIterator) SkipToDataOffset(offset int) (int64, []byte) {
 // whether pclntab contains actual useful data.
 //
 // See layout in the linker: https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L169-L185
-func pclntabFromData(b []byte) []byte {
+func pclntabFromData(data section) []byte {
+	b := data.Data
 	// magic number of the start of pclntab for Go 1.20, little endian.
 	magic := []byte{0xf1, 0xff, 0xff, 0xff, 0x00, 0x00}
 	pclntabOffset := bytes.Index(b, magic)
@@ -366,7 +384,7 @@ type codemap struct {
 // inside nested blocks. -1 if not found.
 func findInBlock(needle []byte, hay []byte) int {
 	i := 0
-	for i+len(needle) < len(hay) {
+	for i+len(needle) <= len(hay) {
 		b := hay[i:]
 		if bytes.HasPrefix(b, needle) {
 			return i
@@ -550,8 +568,6 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 	b = b[4:]
 	offset += 4
 
-	fmt.Printf("\taddress of first block: %x\n", offset+startfunc)
-
 	// 12e697: 02 40                      | block
 	// 12e699: 02 40                      |   block
 	// 12e69b: 02 40                      |     block
@@ -577,7 +593,9 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 		if b[0] == 0x20 && b[1] == 0x00 && b[2] == 0x0E {
 			fm.Blocks = make([][2]int, blockDepth)
 
-			fm.Blocks[len(fm.Blocks)-blockDepth][0] = offset
+			// The block containing br_table *does not count* when performing
+			// the jump. Meaning block 0 is the parent of this block.
+
 			b = b[3:]
 			offset += 3
 			// expect br_table
@@ -604,27 +622,28 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 			}
 			b = b[1:]
 			offset += 1
-			fm.Blocks[len(fm.Blocks)-blockDepth][1] = startfunc + offset
-			blockDepth--
-			fm.Blocks[len(fm.Blocks)-blockDepth][0] = startfunc + offset
+
 			break
 		}
 		// unknown pattern, bail
 		return funcmap{}
 	}
 
-	// Look forward to find the `local.tee 1` in this block, skipping over
-	// inside blocks (such as ifs).
-	//	fmt.Printf("start at: %x\n", offset+startfunc)
-	i := findInBlock([]byte{0x22, 0x01}, b)
+	// Mark the beginning of block 0
+	fm.Blocks[len(fm.Blocks)-blockDepth][0] = startfunc + offset
 
+	// Try to figure out the frame size. Look forward to find the `local.tee 1`
+	// in this block, skipping over inside blocks (such as ifs), then back track
+	// to retrieve the value of the constant.
+	//
+	// 12e6e8: 20 01                      |             local.get 1
+	// 12e6ea: 41 f0 00                   |             i32.const 112
+	// 12e6ed: 6b                         |             i32.sub
+	// 12e6ee: 22 01                      |             local.tee 1
+	// 12e6f0: 24 00                      |             global.set 0
+	i := findInBlock([]byte{0x22, 0x01}, b)
 	if i >= 0 {
 		//		fmt.Printf("found local.tee at: %x\n", offset+startfunc+i)
-		// 12e6e8: 20 01                      |             local.get 1
-		// 12e6ea: 41 f0 00                   |             i32.const 112
-		// 12e6ed: 6b                         |             i32.sub
-		// 12e6ee: 22 01                      |             local.tee 1
-		// 12e6f0: 24 00                      |             global.set 0
 
 		// backtrack until the start of i32.const
 		i--
@@ -648,9 +667,11 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 		b = b[i:]
 		offset += i
 	}
+
 	for blockDepth > 0 {
 		i = findInBlock([]byte{0x0B}, b)
 		if i < 0 {
+			fmt.Println(b)
 			panic("unfinished block")
 		}
 		b = b[i+1:]
@@ -669,28 +690,41 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 //
 // https://github.com/stealthrocket/go/blob/7213f2e72003325df2cebb731de838ac01f20fb6/src/cmd/internal/obj/wasm/wasmobj.go#L357-L364
 
-func buildCodemap(b []byte) codemap {
+const codeSecOffset = 0x001277 // offset of the code section in this wasm binary.
+
+func buildCodemap(code section) codemap {
+	b := code.Data
 	// https://webassembly.github.io/spec/core/binary/modules.html#binary-codesec
 	offset := uint64(0)
+
 	count, n := binary.Uvarint(b)
 	b = b[n:]
 	offset += uint64(n)
+
 	fns := make([]fnRange, count)
 	fnmaps := make([]funcmap, 0, count)
 
 	for i := 0; i < int(count); i++ {
 		fns[i].FnID = uint64(i)
 		fns[i].OffsetStart = offset
+
 		size, n := binary.Uvarint(b)
 		offset += uint64(n)
 		b = b[n:]
 		fncode := b[:int(size)]
 
-		const codeSecOffset = 0x001277
 		fnmap := parseFnCode(fncode, int(offset))
 		fnmap.ID = i
 		fnmap.Start = offset
-		fmt.Printf("func[%d] at %x :: framesize=%d\n", fnmap.ID+14, fnmap.Start+codeSecOffset, fnmap.Frame)
+
+		b = b[int(size):]
+		offset += size
+
+		fns[i].OffsetEnd = offset
+		fnmap.End = offset
+		fnmaps = append(fnmaps, fnmap)
+
+		fmt.Printf("func[%d] at %x-%x :: framesize=%d\n", fnmap.ID+14, fnmap.Start+codeSecOffset, fnmap.End+codeSecOffset, fnmap.Frame)
 		if len(fnmap.Jumps) > 0 {
 			fmt.Printf("\tJumps:")
 			for i, x := range fnmap.Jumps {
@@ -701,12 +735,6 @@ func buildCodemap(b []byte) codemap {
 		for i, block := range fnmap.Blocks {
 			fmt.Printf("\tBlock %d: %x -> %x\n", i, codeSecOffset+fnmap.Start+uint64(block[0]), codeSecOffset+fnmap.Start+uint64(block[1]))
 		}
-
-		b = b[int(size):]
-		offset += uint64(n) + uint64(size)
-		fns[i].OffsetEnd = offset
-		fnmap.End = offset
-		fnmaps = append(fnmaps, fnmap)
 	}
 
 	if len(b) != 0 {
@@ -735,20 +763,20 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	fmt.Println("func len:", len(t.Funcs))
 	pcstart := t.Funcs[0].Entry
 
-	const funcValueOffset = 0x1000
-	for fn := 0; fn <= 1337-14; fn++ {
-		m := 6
-		if fn == 1323 {
-			m = 100
-		}
-		for pcb := 0; pcb <= m; pcb++ {
-			pc := (funcValueOffset+uint64(fn))<<16 | uint64(pcb)
-			fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", fn, pcb, pc)
-			file, line, _ := t.PCToLine(pc)
-			fmt.Println(file, line)
-		}
-	}
-	panic("STOP")
+	//const funcValueOffset = 0x1000
+	//for fn := 0; fn <= 1337-14; fn++ {
+	//	m := 6
+	//	if fn == 1323 {
+	//		m = 100
+	//	}
+	//	for pcb := 0; pcb <= m; pcb++ {
+	//		pc := (funcValueOffset+uint64(fn))<<16 | uint64(pcb)
+	//		fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", fn, pcb, pc)
+	//		file, line, _ := t.PCToLine(pc)
+	//		fmt.Println(file, line)
+	//	}
+	//}
+	//panic("STOP")
 
 	return pclntabmapper{
 		m:       codemap,
@@ -768,8 +796,17 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 		}
 	*/
 
+	xx := p.m.fnmaps[1323]
+	fmt.Println(xx)
+
 	for idx, f := range p.m.fnmaps {
 		if f.Start <= offset && offset < f.End {
+			for j := idx + 1; j < len(p.m.fnmaps); j++ {
+				if p.m.fnmaps[j].Start <= offset && offset < p.m.fnmaps[j].End {
+					panic("there is another match")
+				}
+			}
+
 			// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L142-L158
 			pcF := (funcValueOffset + uint64(f.ID)) << 16
 
@@ -779,6 +816,7 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 			for i, b := range f.Blocks {
 				if b[0] <= int(offset) && int(offset) < b[1] {
 					blockNum = i
+					fmt.Println("--->block", i)
 					break
 				}
 			}
