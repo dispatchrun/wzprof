@@ -35,9 +35,13 @@ func (s section) Valid() bool {
 // This function exists because Wazero doesn't expose the Code and Data sections
 // on its CompiledModule and they are needed to retrieve pclntab on Go-compiled
 // modules.
-func wasmbinSections(b []byte) (code, data section) {
-	const codeSectionId = 10
-	const dataSectionId = 11
+func wasmbinSections(b []byte) (imports, code, data, name section) {
+	const (
+		customSectionId = 0
+		importSectionId = 2
+		codeSectionId   = 10
+		dataSectionId   = 11
+	)
 
 	offset := uint64(0)
 
@@ -51,16 +55,29 @@ func wasmbinSections(b []byte) (code, data section) {
 		b = b[n:]
 		offset += uint64(n)
 		switch id {
+		case importSectionId:
+			imports = section{offset, b[:length]}
 		case codeSectionId:
 			code = section{offset, b[:length]}
 		case dataSectionId:
 			data = section{offset, b[:length]}
-			return // Data section is just after Code.
+		case customSectionId:
+			if data.Valid() { // in order: import, code, data, name
+				// check name to be 'name'
+				nameLen, n := binary.Uvarint(b)
+				x := string(b[n : n+int(nameLen)])
+				if "name" == x {
+					offset += uint64(n) + nameLen
+					b = b[uint64(n)+nameLen:]
+					name = section{offset, b[:length-uint64(n)-nameLen]}
+					return
+				}
+			}
 		}
 		b = b[length:]
 		offset += length
 	}
-	return section{}, section{}
+	return section{}, section{}, section{}, section{}
 }
 
 // dataIterator iterates over the segments contained in a wasm Data section.
@@ -521,6 +538,7 @@ func skipExpr(b []byte) int {
 }
 
 type funcmap struct {
+	Name  string
 	Start uint64 // offset from start of Code
 	End   uint64 // offset from start of Code
 
@@ -690,9 +708,108 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 //
 // https://github.com/stealthrocket/go/blob/7213f2e72003325df2cebb731de838ac01f20fb6/src/cmd/internal/obj/wasm/wasmobj.go#L357-L364
 
+type funcNameIter struct {
+	b     []byte
+	ready bool
+	count int
+}
+
+// For reads the names table to find the name for the given function index.
+// Returns empty string if not found (though empty string is a valid function
+// name). As names are stored in increasing function indexes, this function must
+// be called in increasing order index.
+func (it *funcNameIter) For(idx uint32) string {
+	if !it.ready {
+		// Assume b contains the whole section. Go to the function names
+		// subsection and replace b with it.
+		b := it.b
+		for len(b) > 1 {
+			id := b[0]
+			size, n := binary.Uvarint(b[1:])
+			const functionNamesSubsection = 1
+			b = b[1+uint64(n):]
+			if id == functionNamesSubsection {
+				it.b = b[:size]
+				it.ready = true
+				count, n := binary.Uvarint(it.b)
+				it.b = b[n:]
+				it.count = int(count)
+				break
+			}
+			b = b[size:]
+		}
+		if len(b) == 0 {
+			panic("function name section not found")
+		}
+	}
+	// A name map assigns names to indices in a given index space. It consists of a
+	// vector of index/name pairs in order of increasing index value. Each index must
+	// be unique, but the assigned names need not be.
+
+	for it.count > 0 {
+		i, n := binary.Uvarint(it.b)
+		size, n2 := binary.Uvarint(it.b[n:])
+		o := n + n2
+		if uint32(i) == idx {
+			name := string(it.b[o : o+int(size)])
+			it.b = it.b[o+int(size):]
+			it.count--
+			return name
+		}
+		if uint32(i) > idx {
+			// Do not consume the bytes, as the next call may need them.
+			return ""
+		}
+		it.b = it.b[o+int(size):]
+		it.count--
+	}
+	return ""
+}
+
 const codeSecOffset = 0x001277 // offset of the code section in this wasm binary.
 
-func buildCodemap(code section) codemap {
+func functionImportsCount(imports section) uint32 {
+	fncount := uint32(0)
+	b := imports.Data
+	count, n := binary.Uvarint(b)
+	b = b[n:]
+	for i := uint64(0); i < count; i++ {
+		// skip module name
+		s, n := binary.Uvarint(b)
+		b = b[uint64(n)+s:]
+		// skip value name
+		s, n = binary.Uvarint(b)
+		b = b[uint64(n)+s:]
+		kind := b[0]
+		b = b[1:]
+		switch kind {
+		case 0x00: // function
+			fncount++
+			_, n = binary.Uvarint(b) // skip typeid
+			b = b[uint64(n):]
+		case 0x01:
+			b = b[1:] //reftype
+			fallthrough
+		case 0x02:
+			hasmax := b[0] == 1
+			b = b[1:]
+			_, n = binary.Uvarint(b) // skip min
+			b = b[uint64(n):]
+			if hasmax {
+				_, n = binary.Uvarint(b) // skip max
+				b = b[uint64(n):]
+			}
+		case 0x03:
+			b = b[2:] // valtype + mut
+		}
+	}
+	return fncount
+}
+
+func buildCodemap(code, name, imports section) codemap {
+	startFuncIdx := functionImportsCount(imports)
+	fnit := funcNameIter{b: name.Data}
+
 	b := code.Data
 	// https://webassembly.github.io/spec/core/binary/modules.html#binary-codesec
 	offset := uint64(0)
@@ -704,12 +821,14 @@ func buildCodemap(code section) codemap {
 	fnmaps := make([]funcmap, 0, count)
 
 	for i := 0; i < int(count); i++ {
+		funcIdx := startFuncIdx + uint32(i)
 		size, n := binary.Uvarint(b)
 		offset += uint64(n)
 		b = b[n:]
 		fncode := b[:int(size)]
 
 		fnmap := parseFnCode(fncode, int(offset))
+		fnmap.Name = fnit.For(funcIdx)
 		fnmap.ID = i
 		fnmap.Start = offset
 
@@ -740,14 +859,13 @@ func buildCodemap(code section) codemap {
 }
 
 type pclntabmapper struct {
-	m       codemap
-	t       *gosym.Table
-	pcstart uint64
+	m codemap
+	t *gosym.Table
 }
 
 func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
-	code, data := wasmbinSections(wasmbin)
-	codemap := buildCodemap(code)
+	imports, code, data, name := wasmbinSections(wasmbin)
+	codemap := buildCodemap(code, name, imports)
 	pclntab := pclntabFromData(data)
 
 	lt := gosym.NewLineTable(pclntab, 0)
@@ -755,8 +873,6 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("func len:", len(t.Funcs))
-	pcstart := t.Funcs[0].Entry
 
 	//const funcValueOffset = 0x1000
 	//for fn := 0; fn <= 1337-14; fn++ {
@@ -774,9 +890,8 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	//panic("STOP")
 
 	return pclntabmapper{
-		m:       codemap,
-		t:       t,
-		pcstart: pcstart,
+		m: codemap,
+		t: t,
 	}, nil
 }
 
@@ -790,9 +905,6 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 			fmt.Println("->", idx, f.ID, len(f.Blocks))
 		}
 	*/
-
-	xx := p.m.fnmaps[1323]
-	fmt.Println(xx)
 
 	for idx, f := range p.m.fnmaps {
 		if f.Start <= offset && offset < f.End {

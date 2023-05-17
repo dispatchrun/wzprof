@@ -3,8 +3,8 @@ package wzprof
 import (
 	"bufio"
 	"os"
+	"regexp"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -13,8 +13,8 @@ func TestWasmFunctionStarts(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	code, _ := wasmbinSections(bin)
-	cm := buildCodemap(code)
+	imports, code, _, name := wasmbinSections(bin)
+	cm := buildCodemap(code, name, imports)
 
 	// Format is multiple lines of:
 	//   $offset func[$index] <$funcname>:
@@ -24,8 +24,15 @@ func TestWasmFunctionStarts(t *testing.T) {
 	//   120886 func[1319] <fmt.__pp_.fmtInteger>:
 	// Generated with:
 	//   wasm-objdump -j Code  -d testdata/golang/simple.wasm |grep -E 'func\[' > testdata/golang/simple_addresses.txt
-	var expected []uint64
+	type fnEntry struct {
+		addr uint64
+		idx  int
+		name string
+	}
+	var expected []fnEntry
 	{
+		re := regexp.MustCompile(`^([0-9a-f]+) func\[([0-9]+)\] <(.+)>:`)
+
 		f, err := os.Open("testdata/golang/simple_addresses.txt")
 		if err != nil {
 			panic(err)
@@ -33,12 +40,20 @@ func TestWasmFunctionStarts(t *testing.T) {
 		defer f.Close()
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
-			s := strings.Split(scanner.Text(), " ")[0]
-			start, err := strconv.ParseUint(s, 16, 64)
+			match := re.FindStringSubmatch(scanner.Text())
+			addr, err := strconv.ParseUint(match[1], 16, 64)
 			if err != nil {
 				panic(err)
 			}
-			expected = append(expected, start)
+			idx, err := strconv.ParseUint(match[2], 10, 64)
+			if err != nil {
+				panic(err)
+			}
+			expected = append(expected, fnEntry{
+				name: match[3],
+				addr: addr,
+				idx:  int(idx),
+			})
 		}
 		if err := scanner.Err(); err != nil {
 			panic(err)
@@ -53,8 +68,11 @@ func TestWasmFunctionStarts(t *testing.T) {
 		// fnmaps offsets are relative to the beginning of the Code section,
 		// while the expected address is absolute in the binary.
 		cs := f.Start + code.Offset
-		if cs != expected[i] {
+		if cs != expected[i].addr {
 			t.Errorf("function %d: starts at %x; expected %x", i, cs, expected[i])
+		}
+		if f.Name != expected[i].name {
+			t.Errorf("function %d: name is '%s'; expected '%s'", i, f.Name, expected[i].name)
 		}
 	}
 }
