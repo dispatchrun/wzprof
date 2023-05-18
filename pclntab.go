@@ -576,10 +576,9 @@ func skipExpr(b []byte) int {
 type funcmap struct {
 	Id     fid
 	Name   string
-	Params int    // number of parameters
-	Start  uint64 // offset from start of Code
-	End    uint64 // offset from start of Code
-
+	Params int      // number of parameters
+	Start  uint64   // offset from start of Code
+	End    uint64   // offset from start of Code
 	Frame  uint32   // size in bytes of the frame
 	Jumps  []int    // maps PC_B to block number
 	Blocks [][2]int // [start (offset from fnstart), end (offset from fnstart)]
