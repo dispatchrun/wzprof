@@ -386,12 +386,6 @@ func (m *vmem) CopyAtAddress(addr int64, b []byte) {
 	}
 }
 
-type fnRange struct {
-	OffsetStart uint64
-	OffsetEnd   uint64
-	FnID        uint64
-}
-
 type codemap struct {
 	fnmaps []funcmap
 }
