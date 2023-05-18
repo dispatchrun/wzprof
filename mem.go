@@ -3,6 +3,7 @@ package wzprof
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -295,19 +296,29 @@ func (p *freeProfiler) Abort(ctx context.Context, mod api.Module, def api.Functi
 }
 
 type goRuntimeMallocgcProfiler struct {
-	memory *MemoryProfiler
-	size   uint32
-	stack  stackTrace
+	codemap codemap
+	memory  *MemoryProfiler
+	size    uint32
+	stack   stackTrace
 }
 
 func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
 	imod := mod.(experimental.InternalModule)
 	mem := imod.Memory()
 
-	sp := int32(imod.Global(0).Get())
-	offset := sp + 8*(int32(0)+1) // +1 for the return address
-	b, ok := mem.Read(uint32(offset), 8)
+	sp := uint32(imod.Global(0).Get())
+	offset := sp + 8*(uint32(0)+1) // +1 for the return address
+	b, ok := mem.Read(offset, 8)
 	if ok {
+		si2 := prepareGoStackIterator(imod, mem, sp, fid(def.Index()))
+
+		fmt.Println("=============================")
+		for si2.Next() {
+			fmt.Println("->", si2.ProgramCounter())
+		}
+
+		panic("YO")
+
 		p.size = binary.LittleEndian.Uint32(b)
 		p.stack = makeStackTrace(p.stack, si)
 	} else {

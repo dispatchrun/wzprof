@@ -5,6 +5,8 @@ import (
 	"debug/gosym"
 	"encoding/binary"
 	"fmt"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 
 	"github.com/tetratelabs/wazero"
 )
@@ -386,8 +388,43 @@ func (m *vmem) CopyAtAddress(addr int64, b []byte) {
 	}
 }
 
+// fid is the Id of a function, that is its number in the function section of
+// the module, which includes imports. In a given module, fid = fidx+imports.
+type fid int
+
+// fidx is the index of a function in the Code section of the module, which
+// excludes imports. In a given module, fidx = fid-imports.
+type fidx int
+
 type codemap struct {
-	fnmaps []funcmap
+	imports int       // number of imports in the module
+	fnmaps  []funcmap // fidx -> function details
+}
+
+func (c codemap) FidToIdx(i fid) fidx {
+	return fidx(int(i) - c.imports)
+}
+
+func (c codemap) FidxToId(i fidx) fid {
+	return fid(int(i) + c.imports)
+}
+
+// FindPCF takes the ID of a function and returns the PC_F value of the program
+// counter associated with that function.
+func (c codemap) FindPCF(i fid) uint64 {
+	return uint64(int(i)-c.imports) << 16
+}
+
+func (c codemap) FidForPC(pc uint64) fid {
+	return c.fnmaps[pc>>16].Id
+}
+
+func (c codemap) FidxForPC(pc uint64) fidx {
+	return fidx(pc >> 16)
+}
+
+func (c codemap) FramesizeForFidx(idx fidx) uint32 {
+	return c.fnmaps[idx].Frame
 }
 
 // Return the index of the first needle opcode in this block. Ignores opcodes
@@ -537,16 +574,15 @@ func skipExpr(b []byte) int {
 }
 
 type funcmap struct {
-	Name  string
-	Start uint64 // offset from start of Code
-	End   uint64 // offset from start of Code
+	Id     fid
+	Name   string
+	Params int    // number of parameters
+	Start  uint64 // offset from start of Code
+	End    uint64 // offset from start of Code
 
-	Frame  int
+	Frame  uint32   // size in bytes of the frame
 	Jumps  []int    // maps PC_B to block number
 	Blocks [][2]int // [start (offset from fnstart), end (offset from fnstart)]
-
-	// for debugging
-	ID int
 }
 
 func parseFnCode(b []byte, startfunc int) funcmap {
@@ -692,7 +728,7 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 		// i now points to 0x41.
 		i++
 		size, n := sleb128(32, b[i:])
-		fm.Frame = int(size)
+		fm.Frame = uint32(size)
 		i += n
 		b = b[i:]
 		offset += i
@@ -730,7 +766,7 @@ type funcNameIter struct {
 // Returns empty string if not found (though empty string is a valid function
 // name). As names are stored in increasing function indexes, this function must
 // be called in increasing order index.
-func (it *funcNameIter) For(idx uint32) string {
+func (it *funcNameIter) For(id fid) string {
 	if !it.ready {
 		// Assume b contains the whole section. Go to the function names
 		// subsection and replace b with it.
@@ -762,13 +798,13 @@ func (it *funcNameIter) For(idx uint32) string {
 		i, n := binary.Uvarint(it.b)
 		size, n2 := binary.Uvarint(it.b[n:])
 		o := n + n2
-		if uint32(i) == idx {
+		if uint32(i) == uint32(id) {
 			name := string(it.b[o : o+int(size)])
 			it.b = it.b[o+int(size):]
 			it.count--
 			return name
 		}
-		if uint32(i) > idx {
+		if uint32(i) > uint32(id) {
 			// Do not consume the bytes, as the next call may need them.
 			return ""
 		}
@@ -819,7 +855,7 @@ func functionImportsCount(imports section) uint32 {
 }
 
 func buildCodemap(code, name, imports section) codemap {
-	startFuncIdx := functionImportsCount(imports)
+	importsCount := functionImportsCount(imports)
 	fnit := funcNameIter{b: name.Data}
 
 	b := code.Data
@@ -833,17 +869,17 @@ func buildCodemap(code, name, imports section) codemap {
 	fnmaps := make([]funcmap, 0, count)
 
 	for i := 0; i < int(count); i++ {
-		funcIdx := startFuncIdx + uint32(i)
+		funcId := fid(importsCount + uint32(i))
 		size, n := binary.Uvarint(b)
 		offset += uint64(n)
 		b = b[n:]
 		fncode := b[:int(size)]
 
-		name := fnit.For(funcIdx)
+		name := fnit.For(funcId)
 
 		fnmap := parseFnCode(fncode, int(offset))
 		fnmap.Name = name
-		fnmap.ID = i
+		fnmap.Id = fid(i + int(importsCount))
 		fnmap.Start = offset
 
 		b = b[int(size):]
@@ -852,24 +888,27 @@ func buildCodemap(code, name, imports section) codemap {
 		fnmap.End = offset
 		fnmaps = append(fnmaps, fnmap)
 
-		fmt.Printf("func[%d] at %x-%x :: framesize=%d\n", fnmap.ID+14, fnmap.Start+codeSecOffset, fnmap.End+codeSecOffset, fnmap.Frame)
-		if len(fnmap.Jumps) > 0 {
-			fmt.Printf("\tJumps:")
-			for i, x := range fnmap.Jumps {
-				fmt.Printf(" %d->%d", i, x)
-			}
-			fmt.Println("")
-		}
-		for i, block := range fnmap.Blocks {
-			fmt.Printf("\tBlock %d: %x -> %x\n", i, codeSecOffset+fnmap.Start+uint64(block[0]), codeSecOffset+fnmap.Start+uint64(block[1]))
-		}
+		fmt.Printf("func[%d] %x-%x :: framesize=%d :: %s\n", fnmap.Id+14, fnmap.Start+codeSecOffset, fnmap.End+codeSecOffset, fnmap.Frame, fnmap.Name)
+		//if len(fnmap.Jumps) > 0 {
+		//	fmt.Printf("\tJumps:")
+		//	for i, x := range fnmap.Jumps {
+		//		fmt.Printf(" %d->%d", i, x)
+		//	}
+		//	fmt.Println("")
+		//}
+		//for i, block := range fnmap.Blocks {
+		//	fmt.Printf("\tBlock %d: %x -> %x\n", i, codeSecOffset+fnmap.Start+uint64(block[0]), codeSecOffset+fnmap.Start+uint64(block[1]))
+		//}
 	}
 
 	if len(b) != 0 {
 		panic("leftover bytes")
 	}
 
-	return codemap{fnmaps: fnmaps}
+	return codemap{
+		imports: int(importsCount),
+		fnmaps:  fnmaps,
+	}
 }
 
 type pclntabmapper struct {
@@ -905,6 +944,8 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	//////}
 	//panic("STOP")
 
+	thecodemap = codemap
+
 	return pclntabmapper{
 		m: codemap,
 		t: t,
@@ -918,7 +959,7 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 	const funcValueOffset = 0x1000
 	/*
 		for idx, f := range p.m.fnmaps {
-			fmt.Println("->", idx, f.ID, len(f.Blocks))
+			fmt.Println("->", idx, f.Id, len(f.Blocks))
 		}
 	*/
 
@@ -931,23 +972,17 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 			}
 
 			// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L142-L158
-			pcF := (funcValueOffset + uint64(f.ID)) << 16
-
-			fmt.Println("matched fn", f.ID, len(f.Blocks))
+			pcF := (funcValueOffset + uint64(f.Id)) << 16
 
 			blockNum := -1
 			for i, b := range f.Blocks {
 				if b[0] <= int(offset) && int(offset) < b[1] {
 					blockNum = i
-					fmt.Println("--->block", i)
 					break
 				}
 			}
 			if blockNum == -1 {
 				fmt.Println("warning: matched function but not block")
-				fmt.Println(idx)
-				fmt.Println(offset)
-				fmt.Println(len(f.Blocks))
 				return nil
 			}
 
@@ -976,3 +1011,83 @@ func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
 		// TODO: names
 	}}
 }
+
+// TODO: global variable for now.
+var thecodemap codemap
+
+func prepareGoStackIterator(mod experimental.InternalModule, mem api.Memory, sp uint32, fn fid) goStackIterator {
+	return goStackIterator{
+		cm:  thecodemap,
+		mod: mod,
+		mem: mem,
+		sp:  sp,
+		fn:  thecodemap.FidToIdx(fn),
+
+		// Assume stack iterator starts at the function call, so PC_B=0.
+		pc: thecodemap.FindPCF(fn),
+	}
+}
+
+type goStackIterator struct {
+	cm  codemap
+	mod experimental.InternalModule
+	mem api.Memory
+
+	sp uint32
+	fn fidx
+	pc uint64
+
+	started bool
+}
+
+func (g *goStackIterator) readu64(addr uint32) uint64 {
+	b, ok := g.mem.Read(addr, 8)
+	if !ok {
+		panic("invalid read")
+	}
+	return binary.LittleEndian.Uint64(b)
+}
+
+func (g *goStackIterator) Next() bool {
+	if g.started == false {
+		g.started = true
+		return true
+	}
+
+	// Find the return address (pc in the caller).
+	callerpc := g.readu64(g.sp)
+	// Find the frame size of the function this pc belongs to.
+	parentIdx := g.cm.FidxForPC(callerpc)
+	framesize := g.cm.FramesizeForFidx(parentIdx)
+	// Update the stack pointer: skip frame + return address
+	g.sp -= framesize + 8
+
+	// TODO: figure out how to stop
+	return true
+}
+
+func (g *goStackIterator) Function() experimental.InternalFunction {
+	// TODO: getting an actual *function from wazero is going to be tricky.
+	panic("implement me")
+}
+
+func (g *goStackIterator) ProgramCounter() experimental.ProgramCounter {
+	return experimental.ProgramCounter(g.pc)
+}
+
+func (g *goStackIterator) Parameters() []uint64 {
+	fn := g.mod.InternalFunction(int(g.fn))
+	c := len(fn.Definition().ParamTypes())
+	start := g.sp + 8                       // skip return address
+	b, ok := g.mem.Read(start, 8*uint32(c)) // all parameters are uint64s (8 bytes).
+	if !ok {
+		panic("invalid parameters read")
+	}
+	p := make([]uint64, c) // TODO reuse
+	for i := range p {
+		p[i] = binary.LittleEndian.Uint64(b[i*8 : (i+1)*8])
+	}
+	return p
+}
+
+var _ experimental.StackIterator = &goStackIterator{}
