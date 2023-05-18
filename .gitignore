@@ -19,3 +19,4 @@
 *~
 
 testdata/rust/*/target/*
+testdata/.sysroot/*
