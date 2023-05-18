@@ -461,7 +461,12 @@ func skipInstr(b []byte) int {
 	case 0x42:
 		_, n := sleb128(64, b[i:])
 		i += n
-
+	// 1 f32 arg
+	case 0x43:
+		i += 32 / 8
+	// 1 f64 arg
+	case 0x44:
+		i += 64 / 8
 	// br_table
 	case 0x0E:
 		c, n := binary.Uvarint(b[i:])
@@ -602,17 +607,30 @@ func parseFnCode(b []byte, startfunc int) funcmap {
 	fm := funcmap{}
 	blockDepth := 0
 	for len(b) >= 3 { // 02 40 ... 0b
+		// block
 		if b[0] == 0x02 && b[1] == 0x40 {
 			blockDepth++
 			b = b[2:]
 			offset += 2
 			continue
 		}
+
+		// loop
+		if b[0] == 0x03 && b[1] == 0x40 {
+			blockDepth = 0
+			b = b[2:]
+			offset += 2
+			continue
+		}
+
+		// br_table
 		if b[0] == 0x20 && b[1] == 0x00 && b[2] == 0x0E {
 			fm.Blocks = make([][2]int, blockDepth)
 
-			// The block containing br_table *does not count* when performing
-			// the jump. Meaning block 0 is the parent of this block.
+			// A block is started by the instructions "block", "func", and
+			// "loop". br_table jumps to *the end* of the selected block, except
+			// when the block is started by loop, then it goes to the beginning.
+			// https://musteresel.github.io/posts/2020/01/webassembly-text-br_table-example.html
 
 			b = b[3:]
 			offset += 3
@@ -827,8 +845,10 @@ func buildCodemap(code, name, imports section) codemap {
 		b = b[n:]
 		fncode := b[:int(size)]
 
+		name := fnit.For(funcIdx)
+
 		fnmap := parseFnCode(fncode, int(offset))
-		fnmap.Name = fnit.For(funcIdx)
+		fnmap.Name = name
 		fnmap.ID = i
 		fnmap.Start = offset
 
@@ -877,16 +897,18 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	//const funcValueOffset = 0x1000
 	//for fn := 0; fn <= 1337-14; fn++ {
 	//	m := 6
-	//	if fn == 1323 {
+	//	if fn == 1292-14 {
 	//		m = 100
 	//	}
-	//	for pcb := 0; pcb <= m; pcb++ {
-	//		pc := (funcValueOffset+uint64(fn))<<16 | uint64(pcb)
-	//		fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", fn, pcb, pc)
-	//		file, line, _ := t.PCToLine(pc)
-	//		fmt.Println(file, line)
-	//	}
+	//m := 100
+	//fn := 1335 - 14
+	//for pcb := 0; pcb <= m; pcb++ {
+	//	pc := (funcValueOffset+uint64(fn))<<16 | uint64(pcb)
+	//	fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", fn, pcb, pc)
+	//	file, line, _ := t.PCToLine(pc)
+	//	fmt.Println(file, line)
 	//}
+	//////}
 	//panic("STOP")
 
 	return pclntabmapper{
