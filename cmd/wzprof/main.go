@@ -85,7 +85,8 @@ func (prog *program) run(ctx context.Context) error {
 
 	symbols, err := wzprof.BuildDwarfSymbolizer(compiledModule)
 	if err != nil {
-		return fmt.Errorf("symbolizing wasm module: %w", err)
+		symbols = nil
+		log.Println("warning: symbolizing wasm module:", err)
 	}
 
 	if prog.pprofAddr != "" {
