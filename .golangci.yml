@@ -27,7 +27,7 @@ linters-settings:
   goimports:
     local-prefixes: github.com/stealthrocket/wzprof
   gofumpt:
-    extra-rules: true
+    extra-rules: false
   misspell:
     locale: US
   revive:
