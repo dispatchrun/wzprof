@@ -124,7 +124,7 @@ func (prog *program) run(ctx context.Context) error {
 		defer func() {
 			p := cpu.StopProfile(prog.sampleRate, symbols)
 			if !prog.hostProfile {
-				writeProfile(prog.cpuProfile, p)
+				writeProfile(wasmName, prog.cpuProfile, p)
 			}
 		}()
 	}
@@ -133,7 +133,7 @@ func (prog *program) run(ctx context.Context) error {
 		defer func() {
 			p := mem.NewProfile(prog.sampleRate, symbols)
 			if !prog.hostProfile {
-				writeProfile(prog.memProfile, p)
+				writeProfile(wasmName, prog.memProfile, p)
 			}
 		}()
 	}
@@ -260,7 +260,9 @@ func writeHeapProfile(f *os.File) {
 	}
 }
 
-func writeProfile(path string, prof *profile.Profile) {
+func writeProfile(wasmName string, path string, prof *profile.Profile) {
+	m := &profile.Mapping{ID: 1, File: wasmName}
+	prof.Mapping = []*profile.Mapping{m}
 	if err := wzprof.WriteProfile(path, prof); err != nil {
 		log.Print("ERROR: writing profile:", err)
 	}
