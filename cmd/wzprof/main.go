@@ -260,7 +260,7 @@ func writeHeapProfile(f *os.File) {
 	}
 }
 
-func writeProfile(wasmName string, path string, prof *profile.Profile) {
+func writeProfile(wasmName, path string, prof *profile.Profile) {
 	m := &profile.Mapping{ID: 1, File: wasmName}
 	prof.Mapping = []*profile.Mapping{m}
 	if err := wzprof.WriteProfile(path, prof); err != nil {
