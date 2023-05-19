@@ -6,7 +6,7 @@ changelog:
   categories:
     - title: What's new
       labels:
-        - feature
+        - enhancement
     - title: Performance
       labels:
         - performance
