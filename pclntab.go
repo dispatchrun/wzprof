@@ -2,13 +2,13 @@ package wzprof
 
 import (
 	"bytes"
-	"debug/gosym"
 	"encoding/binary"
 	"fmt"
+
+	"github.com/stealthrocket/wzprof/internal/gosym"
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
-
-	"github.com/tetratelabs/wazero"
 )
 
 func moduleIsGo(mod wazero.CompiledModule) bool {
@@ -835,7 +835,7 @@ func functionImportsCount(imports section) uint32 {
 			_, n = binary.Uvarint(b) // skip typeid
 			b = b[uint64(n):]
 		case 0x01:
-			b = b[1:] //reftype
+			b = b[1:] // reftype
 			fallthrough
 		case 0x02:
 			hasmax := b[0] == 1
@@ -925,23 +925,20 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	if err != nil {
 		return nil, err
 	}
+	fs := lt.FuncSizes()
 
-	//const funcValueOffset = 0x1000
-	//for fn := 0; fn <= 1337-14; fn++ {
-	//	m := 6
-	//	if fn == 1292-14 {
-	//		m = 100
-	//	}
-	//m := 100
-	//fn := 1335 - 14
-	//for pcb := 0; pcb <= m; pcb++ {
-	//	pc := (funcValueOffset+uint64(fn))<<16 | uint64(pcb)
-	//	fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", fn, pcb, pc)
-	//	file, line, _ := t.PCToLine(pc)
-	//	fmt.Println(file, line)
-	//}
-	//////}
-	//panic("STOP")
+	const funcValueOffset = 0x1000
+
+	for pcf := codemap.imports; pcf < codemap.imports+len(codemap.fnmaps); pcf++ {
+		pcb := 0
+		pc := (funcValueOffset+uint64(pcf))<<16 | uint64(pcb)
+		fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", pcf, pcb, pc)
+		idx := t.PCToFuncIdx(pc)
+		file, line, fn := t.PCToLine(pc)
+		xx := fs[idx]
+		fmt.Println(file, line, fn.Name, xx)
+	}
+	panic("STOP")
 
 	thecodemap = codemap
 
@@ -1090,3 +1087,114 @@ func (g *goStackIterator) Parameters() []uint64 {
 }
 
 var _ experimental.StackIterator = &goStackIterator{}
+
+// ptr represents a unintptr in the original unwinder code. Here, the unwinder
+// executes in the host, so this type helps to avoid dereferencing the host
+// memory.
+type ptr uint64
+
+// gptr represents a *g in the original code. It exists for the same reason as
+// ptr, but is a separate type to avoid confusion between the two. The main
+// difference is a gPtr is not supposed to have arithmetic done on it outside of
+// rtmem. Also easier to replace guintptr with a dedicated type.
+type gptr uint64
+
+// wrapper around Wazero's Memory to provide helpers for the implementation of
+// unwinder.
+//
+// Note: we could implement deref generically by reading the right number of
+// bytes for the shape and unsafe cast to the desired type. However this would
+// break if the host is not little endian or uses a different pointer size type.
+// Taking the longer route here of providing dedicated function that perform
+// explicit endianess conversions, but this can probably made faster with the
+// generic method in our most common architectures.
+type rtmem struct {
+	api.Memory
+}
+
+func (r rtmem) readU64(p ptr) uint64 {
+	x, ok := r.ReadUint64Le(uint32(p))
+	if !ok {
+		panic("invalid pointer dereference")
+	}
+	return x
+}
+
+// equivalent to *uintptr.
+func (r rtmem) derefPtr(p ptr) ptr {
+	return ptr(r.readU64(p))
+}
+
+// Layout of g struct:
+//
+// size, index, field
+// 8,    0,     stack.lo
+// 8,    1,     stack.hi
+// 8,    2,     stackguard0
+// 8,    3,     stackguard1
+// 8,    4,     _panic
+// 8,    5,     _defer
+// 8,    6,     m
+// 8,    7,     sched.sp
+// 8,    8,     sched.pc
+// 8,    9,     sched.g
+// 8,    10,    sched.ctxt
+// 8,    11,    sched.ret
+// 8,    12,    sched.lr
+// 8,    13,    sched.bp
+// 8,    14,    syscallsp
+// 8,    15,    syscallpc
+// 8,    16,    stktopsp
+// more fields that we don't care about
+
+// Layout of M struct:
+//
+// size, offset, field
+// 8,    0,      g0
+// 56,   8,      morebuf
+// 8,    64,     divmod, -
+// 8,    72,     procid
+// 8,    80,     gsignal
+// 0,    88,     goSigStack
+// 0,    88,     sigmask
+// 48,   88,     tls
+// 8,    136,    mstartfn
+// 8,    144,    curg
+// more fields we don't care about
+//
+// goSigStack and sigmask are 0 because
+// https://github.com/golang/go/blob/b950cc8f11dc31cc9f6cfbed883818a7aa3abe94/src/runtime/os_wasm.go#L132
+
+func (r rtmem) gM(g gptr) ptr {
+	return ptr(r.readU64(ptr(g) + 8*6))
+}
+
+func (r rtmem) gMG0(g gptr) gptr {
+	m := r.gM(g)
+	return gptr(r.readU64(m + 0))
+}
+
+func (r rtmem) gMCurg(g gptr) gptr {
+	m := r.gM(g)
+	return gptr(r.readU64(m + 144))
+}
+
+func (r rtmem) gSchedSp(g gptr) ptr {
+	return ptr(r.readU64(ptr(g) + 8*7))
+}
+
+func (r rtmem) gSchedPc(g gptr) ptr {
+	return ptr(r.readU64(ptr(g) + 8*8))
+}
+
+func (r rtmem) gSchedLr(g gptr) ptr {
+	return ptr(r.readU64(ptr(g) + 8*12))
+}
+
+func (r rtmem) gSyscallsp(g gptr) ptr {
+	return ptr(r.readU64(ptr(g) + 8*14))
+}
+
+func (r rtmem) gSyscallpc(g gptr) ptr {
+	return ptr(r.readU64(ptr(g) + 8*15))
+}
