@@ -187,15 +187,6 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 	f := u.symbols.info.FindFunc(uint64(frame.pc))
 	if !f.Valid() {
 		panic("could not find func fo pc")
-		// if flags&unwindSilentErrors == 0 {
-		// 	print("runtime: g ", gp.goid, ": unknown pc ", hex(frame.pc), "\n")
-		// 	tracebackHexdump(gp.stack, &frame, 0)
-		// }
-		// if flags&(unwindPrintErrors|unwindSilentErrors) == 0 {
-		// 	throw("unknown pc")
-		// }
-		// *u = unwinder{}
-		// return
 	}
 	frame.fn = f
 

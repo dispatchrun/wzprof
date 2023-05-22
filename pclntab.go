@@ -11,13 +11,6 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
-const (
-	customSectionId = 0
-	importSectionId = 2
-	codeSectionId   = 10
-	dataSectionId   = 11
-)
-
 func compiledByGo(mod wazero.CompiledModule) bool {
 	for _, s := range mod.CustomSections() {
 		if s.Name() == "go:buildid" {
@@ -47,7 +40,9 @@ func (s section) Valid() bool {
 // This function exists because Wazero doesn't expose the Code and Data sections
 // on its CompiledModule and they are needed to retrieve pclntab on Go-compiled
 // modules.
-func wasmbinSection(b []byte, sectionId byte, name string) section {
+func wasmdataSection(b []byte) section {
+	const dataSectionId = 11
+
 	offset := uint64(0)
 
 	b = b[8:] // skip magic+version
@@ -60,18 +55,8 @@ func wasmbinSection(b []byte, sectionId byte, name string) section {
 		b = b[n:]
 		offset += uint64(n)
 
-		if id == sectionId {
-			if id == customSectionId {
-				nameLen, n := binary.Uvarint(b)
-				x := string(b[n : n+int(nameLen)])
-				if x == name {
-					offset += uint64(n) + nameLen
-					b = b[uint64(n)+nameLen:]
-					return section{offset, b[:length-uint64(n)-nameLen]}
-				}
-			} else {
-				return section{offset, b[:length]}
-			}
+		if id == dataSectionId {
+			return section{offset, b[:length]}
 		}
 		b = b[length:]
 		offset += length
@@ -340,14 +325,10 @@ func (m *vmem) Has(addr int) bool {
 func (m *vmem) PclntabOffset(word int) (uint64, error) {
 	s := 8 + word*m.Ptrsize
 	e := s + 8
-
 	if !m.Has(e) {
 		return 0, fault
 	}
-
 	res := binary.LittleEndian.Uint64(m.b[s:])
-
-	fmt.Printf("word=%d -> addr=%d :: res=%d\n", word, s, res)
 	return res, nil
 }
 
@@ -382,7 +363,7 @@ type fid int
 type fidx int
 
 func gosymTableFromModule(wasmbin []byte) (*gosym.Table, *gosym.LineTable, error) {
-	data := wasmbinSection(wasmbin, dataSectionId, "")
+	data := wasmdataSection(wasmbin)
 	pclntab := pclntabFromData(data)
 	lt := gosym.NewLineTable(pclntab, 0)
 	t, err := gosym.NewTable(nil, lt)
@@ -566,7 +547,7 @@ type goFunction struct {
 	sym *pclntabmapper
 	pc  ptr
 
-	api.FunctionDefinition
+	api.FunctionDefinition // required for WazeroOnly
 }
 
 func (f goFunction) Definition() api.FunctionDefinition {
@@ -577,46 +558,46 @@ func (f goFunction) SourceOffsetForPC(experimental.ProgramCounter) uint64 {
 	panic("does not make sense")
 }
 
-func (d goFunction) ModuleName() string {
-	return d.sym.modName
+func (f goFunction) ModuleName() string {
+	return f.sym.modName
 }
 
-func (d goFunction) Index() uint32 {
-	return uint32(d.sym.PCToID(d.pc))
+func (f goFunction) Index() uint32 {
+	return uint32(f.sym.PCToID(f.pc))
 }
 
-func (d goFunction) Import() (string, string, bool) {
+func (f goFunction) Import() (string, string, bool) {
 	panic("implement me")
 }
 
-func (d goFunction) ExportNames() []string {
+func (f goFunction) ExportNames() []string {
 	panic("implement me")
 }
 
-func (d goFunction) Name() string {
-	return d.sym.PCToName(d.pc)
+func (f goFunction) Name() string {
+	return f.sym.PCToName(f.pc)
 }
 
-func (d goFunction) DebugName() string {
+func (f goFunction) DebugName() string {
 	panic("implement me")
 }
 
-func (d goFunction) GoFunction() interface{} {
+func (f goFunction) GoFunction() interface{} {
 	panic("implement me")
 }
 
-func (d goFunction) ParamTypes() []api.ValueType {
+func (f goFunction) ParamTypes() []api.ValueType {
 	panic("implement me")
 }
 
-func (d goFunction) ParamNames() []string {
+func (f goFunction) ParamNames() []string {
 	panic("implement me")
 }
 
-func (d goFunction) ResultTypes() []api.ValueType {
+func (f goFunction) ResultTypes() []api.ValueType {
 	panic("implement me")
 }
 
-func (d goFunction) ResultNames() []string {
+func (f goFunction) ResultNames() []string {
 	panic("implement me")
 }

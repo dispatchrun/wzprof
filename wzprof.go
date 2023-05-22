@@ -30,14 +30,16 @@ type Runtime struct {
 }
 
 func NewRuntime() *Runtime {
-	return &Runtime{}
+	return &Runtime{
+		stackIterator: wasmStackIteratorMaker{},
+		symbols:       noopsymbolizer{},
+	}
 }
 
 func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 	r.wasm = wasm
 	r.mod = mod
 
-	var err error
 	switch {
 	case compiledByGo(r.mod):
 		s, err := buildPclntabSymbolizer(wasm, mod)
@@ -52,11 +54,7 @@ func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 			},
 		}
 	default:
-		r.symbols, err = buildDwarfSymbolizer(r.mod)
-		r.stackIterator = wasmStackIteratorMaker{}
-	}
-	if err != nil {
-		r.symbols = noopsymbolizer{}
+		r.symbols, _ = buildDwarfSymbolizer(r.mod) // TODO: surface error as warning?
 	}
 
 	return nil

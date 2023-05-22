@@ -10,20 +10,23 @@ import (
 )
 
 func BenchmarkCPUProfilerOn(b *testing.B) {
-	p := NewCPUProfiler()
+	rt := NewRuntime()
+	p := NewCPUProfiler(rt)
 	p.StartProfile()
 	benchmarkFunctionListener(b, p)
 }
 
 func BenchmarkCPUProfilerOff(b *testing.B) {
-	p := NewCPUProfiler()
+	rt := NewRuntime()
+	p := NewCPUProfiler(rt)
 	benchmarkFunctionListener(b, p)
 }
 
 func TestCPUProfilerTime(t *testing.T) {
+	rt := NewRuntime()
 	currentTime := int64(0)
 
-	p := NewCPUProfiler(
+	p := NewCPUProfiler(rt,
 		TimeFunc(func() int64 { return currentTime }),
 	)
 

@@ -5,5 +5,6 @@ import (
 )
 
 func BenchmarkMemoryProfiler(b *testing.B) {
-	benchmarkFunctionListener(b, NewMemoryProfiler())
+	rt := NewRuntime()
+	benchmarkFunctionListener(b, NewMemoryProfiler(rt))
 }

@@ -109,13 +109,6 @@ func (f *FuncInfo) Valid() bool {
 
 func (t *LineTable) RuntimeInfo() RuntimeInfo {
 	// based on go12Funcs
-	// Assume it is malformed and return nil on error.
-	if !disableRecover {
-		defer func() {
-			recover()
-		}()
-	}
-
 	ft := t.funcTab()
 	funcs := make([]FuncInfo, ft.Count())
 	for i := range funcs {
@@ -156,24 +149,4 @@ func (t *LineTable) funcInfo(i uint32) FuncInfo {
 		FuncID:      FuncID(data[40]),
 		Flag:        FuncFlag(data[41]),
 	}
-}
-
-func (t *Table) PCToFuncIdx(pc uint64) int {
-	// Based on PCtoFunc
-	funcs := t.Funcs
-	start := 0
-	end := len(funcs)
-	for start <= end {
-		m := (end-start)/2 + start
-		fn := &funcs[m]
-		switch {
-		case pc < fn.Entry:
-			end = m
-		case fn.Entry <= pc && pc < fn.End:
-			return m
-		default:
-			start = m + 1
-		}
-	}
-	return -1
 }

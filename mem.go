@@ -174,9 +174,9 @@ func (p *MemoryProfiler) NewHandler(sampleRate float64) http.Handler {
 // NewFunctionListener returns a function listener suited to install a hook on
 // functions responsible for memory allocation.
 //
-// The listener recognizes multiple memory alloction functions used by compilers
-// and libraries. It uses the function name to detect memory allocators,
-// currently supporting libc, Go, and TinyGo.
+// The listener recognizes multiple memory allocation functions used by
+// compilers and libraries. It uses the function name to detect memory
+// allocators, currently supporting libc, Go, and TinyGo.
 func (p *MemoryProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
 	switch def.Name() {
 	// C standard library, Rust
