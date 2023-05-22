@@ -404,8 +404,15 @@ func (p *pclntabmapper) Locations(_ experimental.InternalFunction, pc experiment
 	}}
 }
 
-func (p *pclntabmapper) PCToID(pc ptr) fid {
+// https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
+const funcValueOffset = 0x1000
+
+func (p *pclntabmapper) PCToFID(pc ptr) fid {
 	return fid(uint64(pc)>>16 + p.imported - funcValueOffset)
+}
+
+func (p *pclntabmapper) FIDToPC(f fid) ptr {
+	return ptr((funcValueOffset + f - fid(p.imported)) << 16)
 }
 
 func (p *pclntabmapper) PCToName(pc ptr) string {
@@ -563,7 +570,7 @@ func (f goFunction) ModuleName() string {
 }
 
 func (f goFunction) Index() uint32 {
-	return uint32(f.sym.PCToID(f.pc))
+	return uint32(f.sym.PCToFID(f.pc))
 }
 
 func (f goFunction) Import() (string, string, bool) {

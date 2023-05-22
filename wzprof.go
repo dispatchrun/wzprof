@@ -21,11 +21,13 @@ type stackIteratorMaker interface {
 	Make(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
 }
 
+// Runtime contains information specific to the guest runtime.
 type Runtime struct {
 	symbols       symbolizer
 	stackIterator stackIteratorMaker
 }
 
+// NewRuntime creates a new runtime with sensible defaults.
 func NewRuntime() *Runtime {
 	return &Runtime{
 		stackIterator: wasmStackIteratorMaker{},
@@ -33,6 +35,8 @@ func NewRuntime() *Runtime {
 	}
 }
 
+// PrepareModule selects the most appropriate analysis functions for the guest
+// code in the provided module.
 func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 	switch {
 	case compiledByGo(mod):
@@ -61,15 +65,7 @@ func (w wasmStackIteratorMaker) Make(mod api.Module, def api.FunctionDefinition,
 }
 
 type goStackIteratorMaker struct {
-	imported uint32
 	goStackIterator
-}
-
-const funcValueOffset = 0x1000
-
-func (g *goStackIteratorMaker) pcForFID(f fid) ptr {
-	// https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
-	return ptr((funcValueOffset + f - fid(g.imported)) << 16)
 }
 
 func (g *goStackIteratorMaker) Make(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
@@ -78,7 +74,7 @@ func (g *goStackIteratorMaker) Make(mod api.Module, def api.FunctionDefinition, 
 	g.mem = rtmem{mem}
 	sp0 := uint32(imod.Global(0).Get())
 	gp0 := imod.Global(2).Get()
-	pc0 := g.pcForFID(fid(def.Index()))
+	pc0 := g.symbols.FIDToPC(fid(def.Index()))
 	g.initAt(ptr(pc0), ptr(sp0), 0, gptr(gp0), 0)
 	return g
 }
