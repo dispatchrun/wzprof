@@ -313,9 +313,28 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 		si2 := prepareGoStackIterator(imod, mem, sp, fid(def.Index()))
 
 		fmt.Println("=============================")
-		for si2.Next() {
-			fmt.Println("->", si2.ProgramCounter())
+
+		u := unwinder{
+			rti: globalrti,
+			mem: rtmem{mem},
 		}
+
+		//si.Next()
+		pc0 := thecodemap.FindPCF(fid(def.Index()))
+		gp0 := imod.Global(2).Get()
+		fmt.Println("INITIALIZING:")
+		u.initAt(ptr(pc0), ptr(sp), 0, gptr(gp0), 0)
+
+		fmt.Println("LOOPING! ( pc0 =", pc0, ")")
+		for ; u.valid(); u.next() {
+			fmt.Println("STACK PC:", u.frame.pc)
+			name := thecodemap.NameForPC(uint64(u.frame.pc))
+			fmt.Println("\t", name)
+		}
+
+		//for si2.Next() {
+		//	fmt.Println("->", si2.ProgramCounter())
+		//}
 
 		panic("YO")
 

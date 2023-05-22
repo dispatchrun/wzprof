@@ -64,6 +64,7 @@ const (
 
 type RuntimeInfo struct {
 	funcs []FuncInfo
+	Pctab []byte
 }
 
 func (r RuntimeInfo) FindFunc(pc uint64) *FuncInfo {
@@ -122,7 +123,7 @@ func (t *LineTable) RuntimeInfo() RuntimeInfo {
 		funcs[i].Entry = ft.pc(i)
 		funcs[i].End = ft.pc(i + 1)
 	}
-	return RuntimeInfo{funcs}
+	return RuntimeInfo{funcs: funcs, Pctab: t.pctab}
 }
 
 // mix of funcData + field to fully reconstruct the i-th func object (because we

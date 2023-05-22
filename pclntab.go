@@ -409,18 +409,25 @@ func (c codemap) FidxToId(i fidx) fid {
 	return fid(int(i) + c.imports)
 }
 
+// https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
+const funcValueOffset = 0x1000
+
 // FindPCF takes the ID of a function and returns the PC_F value of the program
 // counter associated with that function.
 func (c codemap) FindPCF(i fid) uint64 {
-	return uint64(int(i)-c.imports) << 16
+	return uint64(funcValueOffset+int(i)-c.imports) << 16
 }
 
 func (c codemap) FidForPC(pc uint64) fid {
-	return c.fnmaps[pc>>16].Id
+	return c.fnmaps[pc>>16-funcValueOffset].Id
+}
+
+func (c codemap) NameForPC(pc uint64) string {
+	return c.fnmaps[pc>>16-funcValueOffset].Name
 }
 
 func (c codemap) FidxForPC(pc uint64) fidx {
-	return fidx(pc >> 16)
+	return fidx(pc>>16 - funcValueOffset)
 }
 
 func (c codemap) FramesizeForFidx(idx fidx) uint32 {
@@ -915,6 +922,8 @@ type pclntabmapper struct {
 	t *gosym.Table
 }
 
+var globalrti gosym.RuntimeInfo
+
 func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	imports, code, data, name := wasmbinSections(wasmbin)
 	codemap := buildCodemap(code, name, imports)
@@ -925,22 +934,23 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	if err != nil {
 		return nil, err
 	}
-	fs := lt.FuncSizes()
 
-	const funcValueOffset = 0x1000
+	// fs := lt.RuntimeInfo()
 
-	for pcf := codemap.imports; pcf < codemap.imports+len(codemap.fnmaps); pcf++ {
-		pcb := 0
-		pc := (funcValueOffset+uint64(pcf))<<16 | uint64(pcb)
-		fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", pcf, pcb, pc)
-		idx := t.PCToFuncIdx(pc)
-		file, line, fn := t.PCToLine(pc)
-		xx := fs[idx]
-		fmt.Println(file, line, fn.Name, xx)
-	}
-	panic("STOP")
+	// const funcValueOffset = 0x1000
+
+	// for pcf := codemap.imports; pcf < codemap.imports+len(codemap.fnmaps); pcf++ {
+	// 	pcb := 0
+	// 	pc := (funcValueOffset+uint64(pcf))<<16 | uint64(pcb)
+	// 	fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", pcf, pcb, pc)
+	// 	idx := t.PCToFuncIdx(pc)
+	// 	file, line, fn := t.PCToLine(pc)
+	// 	xx := fs[idx]
+	// 	fmt.Println(file, line, fn.Name, xx)
+	// }
 
 	thecodemap = codemap
+	globalrti = lt.RuntimeInfo()
 
 	return pclntabmapper{
 		m: codemap,
@@ -1197,4 +1207,8 @@ func (r rtmem) gSyscallsp(g gptr) ptr {
 
 func (r rtmem) gSyscallpc(g gptr) ptr {
 	return ptr(r.readU64(ptr(g) + 8*15))
+}
+
+func (r rtmem) gStktopsp(g gptr) ptr {
+	return ptr(r.readU64(ptr(g) + 8*16))
 }

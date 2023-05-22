@@ -1,6 +1,7 @@
 package wzprof
 
 import (
+	"fmt"
 	"github.com/stealthrocket/wzprof/internal/gosym"
 )
 
@@ -94,7 +95,7 @@ type pcvalueCache struct {
 }
 type pcvalueCacheEnt struct {
 	// targetpc and off together are the key of this cache entry.
-	targetpc uintptr
+	targetpc ptr
 	off      uint32
 	// val is the value of this cached pcvalue entry.
 	val int32
@@ -159,8 +160,8 @@ const (
 // we're doing that in trivial methods that are inlined into the caller that has
 // the stack allocation, but that's fragile.
 type unwinder struct {
-	pclntab gosym.RuntimeInfo
-	mem     rtmem
+	rti gosym.RuntimeInfo
+	mem rtmem
 
 	// frame is the current physical stack frame, or all 0s if
 	// there is no frame.
@@ -184,7 +185,7 @@ type unwinder struct {
 	flags unwindFlags
 
 	// cache is used to cache pcvalue lookups.
-	cache pcvalueCache
+	// cache pcvalueCache
 }
 
 const (
@@ -208,9 +209,9 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 		frame.sp += goarchPtrSize
 	}
 
-	f := u.pclntab.FindFunc(uint64(frame.pc))
+	f := u.rti.FindFunc(uint64(frame.pc))
 	if !f.Valid() {
-		panic("couldn't find func fo pc")
+		panic("could not find func fo pc")
 		// if flags&unwindSilentErrors == 0 {
 		// 	print("runtime: g ", gp.goid, ": unknown pc ", hex(frame.pc), "\n")
 		// 	tracebackHexdump(gp.stack, &frame, 0)
@@ -224,15 +225,19 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 	frame.fn = f
 
 	// Populate the unwinder.
-	*u = unwinder{
-		frame: frame,
-		// g:            gp.guintptr(),
-		// cgoCtxt:      len(gp.cgoCtxt) - 1,
-		// calleeFuncID: abi.FuncIDNormal,
-		flags: flags,
-	}
+	u.frame = frame
+	u.flags = flags
+	u.g = gp
+	u.calleeFuncID = gosym.FuncIDNormal
+	//*u = unwinder{
+	//	frame: frame,
+	//	// g:            gp.guintptr(),
+	//	// cgoCtxt:      len(gp.cgoCtxt) - 1,
+	//	// calleeFuncID: abi.FuncIDNormal,
+	//	flags: flags,
+	//}
 
-	isSyscall := frame.pc == pc0 && frame.sp == sp0 && pc0 == gp.syscallpc && sp0 == gp.syscallsp
+	isSyscall := frame.pc == pc0 && frame.sp == sp0 && pc0 == u.mem.gSyscallpc(gp) && sp0 == u.mem.gSyscallsp(gp)
 	u.resolveInternal(true, isSyscall)
 }
 
@@ -263,7 +268,7 @@ func (u *unwinder) valid() bool {
 // This is internal to unwinder.
 func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 	frame := &u.frame
-	gp := u.g.ptr()
+	gp := u.g
 
 	f := frame.fn
 	if f.Pcsp == 0 {
@@ -297,7 +302,7 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 		// We also defensively check that this won't switch M's on us,
 		// which could happen at critical points in the scheduler.
 		// This ensures gp.m doesn't change from a stack jump.
-		if u.flags&unwindJumpStack != 0 && gp == gp.m.g0 && gp.m.curg != nil && gp.m.curg.m == gp.m {
+		if u.flags&unwindJumpStack != 0 && gp == u.mem.gMG0(gp) && u.mem.gMCurg(gp) != 0 && ptr(u.mem.gMCurg(gp)) == u.mem.gM(gp) {
 			switch f.FuncID {
 			case gosym.FuncID_morestack:
 				// morestack does not return normally -- newstack()
@@ -305,14 +310,14 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				// This keeps morestack() from showing up in the backtrace,
 				// but that makes some sense since it'll never be returned
 				// to.
-				gp = gp.m.curg
-				u.g.set(gp)
-				frame.pc = gp.sched.pc
-				frame.fn = u.pclntab.FindFunc(uint64(frame.pc))
+				gp = u.mem.gMCurg(gp)
+				u.g = gp
+				frame.pc = u.mem.gSchedPc(gp)
+				frame.fn = u.rti.FindFunc(uint64(frame.pc))
 				f = frame.fn
 				flag = f.Flag
-				frame.lr = gp.sched.lr
-				frame.sp = gp.sched.sp
+				frame.lr = u.mem.gSchedLr(gp)
+				frame.sp = u.mem.gSchedSp(gp)
 				// u.cgoCtxt = len(gp.cgoCtxt) - 1
 			case gosym.FuncID_systemstack:
 				// systemstack returns normally, so just follow the
@@ -324,19 +329,20 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				// 	// about to return. Just unwind normally.
 				// 	// Do this only on LR machines because on x86
 				// 	// systemstack doesn't have an SP delta (the LL
-				// 	// instruction opens the frame), therefore no way					// to check.
+				// 	// instruction opens the frame), therefore no way
+				//      // to check.
 				// 	flag &^= abi.FuncFlagSPWrite
 				// 	break
 				// }
 
-				gp = gp.m.curg
-				u.g.set(gp)
-				frame.sp = gp.sched.sp
+				gp = u.mem.gMCurg(gp)
+				u.g = gp
+				frame.sp = u.mem.gSchedSp(gp)
 				// u.cgoCtxt = len(gp.cgoCtxt) - 1
 				flag &^= gosym.FuncFlagSPWrite
 			}
 		}
-		frame.fp = frame.sp + uintptr(funcspdelta(f, frame.pc, &u.cache))
+		frame.fp = frame.sp + ptr(funcspdelta(u.rti.Pctab, f, frame.pc))
 		// if !usesLR {
 		// On x86, call instruction pushes return PC before entering new function.
 		frame.fp += goarchPtrSize
@@ -453,7 +459,7 @@ func (u *unwinder) next() {
 		u.finishInternal()
 		return
 	}
-	flr := u.pclntab.FindFunc(uint64(frame.lr))
+	flr := u.rti.FindFunc(uint64(frame.lr))
 	if !flr.Valid() {
 		// This happens if you get a profiling interrupt at just the wrong time.
 		// In that context it is okay to stop early.
@@ -567,10 +573,168 @@ func (u *unwinder) finishInternal() {
 	// At other times, such as when gathering a stack for a profiling signal
 	// or when printing a traceback during a crash, everything may not be
 	// stopped nicely, and the stack walk may not be able to complete.
-	gp := u.g.ptr()
-	if u.flags&(unwindPrintErrors|unwindSilentErrors) == 0 && u.frame.sp != gp.stktopsp {
+	gp := u.g
+	gstktopsp := u.mem.gStktopsp(gp)
+	fmt.Println("u.frame.sp =", u.frame.sp, "AND u.mem.g.stktopsp =", gstktopsp, "flags:", u.flags)
+	if u.flags&(unwindPrintErrors|unwindSilentErrors) == 0 && u.frame.sp != gstktopsp {
 		//		print("runtime: g", gp.goid, ": frame.sp=", hex(u.frame.sp), " top=", hex(gp.stktopsp), "\n")
 		//		print("\tstack=[", hex(gp.stack.lo), "-", hex(gp.stack.hi), "\n")
-		panic("traceback did not unwind completely")
+		//panic("traceback did not unwind completely")
 	}
+}
+
+func funcspdelta(pctab []byte, f *gosym.FuncInfo, targetpc ptr) int32 {
+	x, _ := pcvalue(pctab, f, f.Pcsp, targetpc, true)
+	// if debugPcln && x&(goarchPtrSize-1) != 0 {
+	// 	print("invalid spdelta ", funcname(f), " ", hex(f.entry()), " ", hex(targetpc), " ", hex(f.pcsp), " ", x, "\n")
+	// 	throw("bad spdelta")
+	// }
+	return x
+}
+
+// Returns the PCData value, and the PC where this value starts.
+// TODO: the start PC is returned only when cache is nil.
+func pcvalue(pctab []byte, f *gosym.FuncInfo, off uint32, targetpc ptr, strict bool) (int32, ptr) {
+	if off == 0 {
+		return -1, 0
+	}
+
+	// Check the cache. This speeds up walks of deep stacks, which
+	// tend to have the same recursive functions over and over.
+	//
+	// This cache is small enough that full associativity is
+	// cheaper than doing the hashing for a less associative
+	// cache.
+	// if cache != nil {
+	// 	x := pcvalueCacheKey(targetpc)
+	// 	for i := range cache.entries[x] {
+	// 		// We check off first because we're more
+	// 		// likely to have multiple entries with
+	// 		// different offsets for the same targetpc
+	// 		// than the other way around, so we'll usually
+	// 		// fail in the first clause.
+	// 		ent := &cache.entries[x][i]
+	// 		if ent.off == off && ent.targetpc == targetpc {
+	// 			return ent.val, 0
+	// 		}
+	// 	}
+	// }
+
+	if !f.Valid() {
+		panic("no module data")
+		// if strict && panicking.Load() == 0 {
+		// 	println("runtime: no module data for", hex(f.entry()))
+		// 	throw("no module data")
+		// }
+		// return -1, 0
+	}
+	// datap := f.datap
+	p := pctab[off:]
+	// pc := f.entry()
+	pc := ptr(f.Entry)
+	prevpc := pc
+	val := int32(-1)
+	for {
+		var ok bool
+		p, ok = step(p, &pc, &val, pc == ptr(f.Entry))
+		if !ok {
+			break
+		}
+		if targetpc < pc {
+			// Replace a random entry in the cache. Random
+			// replacement prevents a performance cliff if
+			// a recursive stack's cycle is slightly
+			// larger than the cache.
+			// Put the new element at the beginning,
+			// since it is the most likely to be newly used.
+			// if cache != nil {
+			// 	x := pcvalueCacheKey(targetpc)
+			// 	e := &cache.entries[x]
+			// 	ci := fastrandn(uint32(len(cache.entries[x])))
+			// 	e[ci] = e[0]
+			// 	e[0] = pcvalueCacheEnt{
+			// 		targetpc: targetpc,
+			// 		off:      off,
+			// 		val:      val,
+			// 	}
+			// }
+
+			return val, prevpc
+		}
+		prevpc = pc
+	}
+
+	panic("invalid pc-encoded table")
+
+	// If there was a table, it should have covered all program counters.
+	// If not, something is wrong.
+	// if panicking.Load() != 0 || !strict {
+	// 	return -1, 0
+	// }
+
+	// print("runtime: invalid pc-encoded table f=", funcname(f), " pc=", hex(pc), " targetpc=", hex(targetpc), " tab=", p, "\n")
+
+	// pc = ptr(f.Entry)
+	// val = -1
+	// for {
+	// 	var ok bool
+	// 	p, ok = step(p, &pc, &val, pc == f.entry())
+	// 	if !ok {
+	// 		break
+	// 	}
+	// 	print("\tvalue=", val, " until pc=", hex(pc), "\n")
+	// }
+
+	// throw("invalid runtime symbol table")
+	// return -1, 0
+}
+
+// pcvalueCacheKey returns the outermost index in a pcvalueCache to use for targetpc.
+// It must be very cheap to calculate.
+// For now, align to goarch.PtrSize and reduce mod the number of entries.
+// In practice, this appears to be fairly randomly and evenly distributed.
+func pcvalueCacheKey(targetpc ptr) ptr {
+	return (targetpc / goarchPtrSize) % ptr(len(pcvalueCache{}.entries))
+}
+
+const sysPCQuantum = 1 // https://github.com/golang/go/blob/49ad23a6d23d6cc1666c22e4bc215f25f717b569/src/internal/goarch/goarch_wasm.go
+
+// step advances to the next pc, value pair in the encoded table.
+func step(p []byte, pc *ptr, val *int32, first bool) (newp []byte, ok bool) {
+	// For both uvdelta and pcdelta, the common case (~70%)
+	// is that they are a single byte. If so, avoid calling readvarint.
+	uvdelta := uint32(p[0])
+	if uvdelta == 0 && !first {
+		return nil, false
+	}
+	n := uint32(1)
+	if uvdelta&0x80 != 0 {
+		n, uvdelta = readvarint(p)
+	}
+	*val += int32(-(uvdelta & 1) ^ (uvdelta >> 1))
+	p = p[n:]
+
+	pcdelta := uint32(p[0])
+	n = 1
+	if pcdelta&0x80 != 0 {
+		n, pcdelta = readvarint(p)
+	}
+	p = p[n:]
+	*pc += ptr(pcdelta * sysPCQuantum)
+	return p, true
+}
+
+// readvarint reads a varint from p.
+func readvarint(p []byte) (read uint32, val uint32) {
+	var v, shift, n uint32
+	for {
+		b := p[n]
+		n++
+		v |= uint32(b&0x7F) << (shift & 31)
+		if b&0x80 == 0 {
+			break
+		}
+		shift += 7
+	}
+	return n, v
 }
