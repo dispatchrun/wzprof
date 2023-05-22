@@ -137,20 +137,9 @@ const (
 //	for u.init(gp, 0); u.valid(); u.next() {
 //		// ... use frame info in u ...
 //	}
-//
-// Implementation note: This is carefully structured to be pointer-free because
-// tracebacks happen in places that disallow write barriers (e.g., signals).
-// Even if this is stack-allocated, its pointer-receiver methods don't know that
-// their receiver is on the stack, so they still emit write barriers. Here we
-// address that by carefully avoiding any pointers in this type. Another
-// approach would be to split this into a mutable part that's passed by pointer
-// but contains no pointers itself and an immutable part that's passed and
-// returned by value and can contain pointers. We could potentially hide that
-// we're doing that in trivial methods that are inlined into the caller that has
-// the stack allocation, but that's fragile.
 type unwinder struct {
-	rti gosym.RuntimeInfo
-	mem rtmem
+	symbols *pclntabmapper
+	mem     rtmem
 
 	// frame is the current physical stack frame, or all 0s if
 	// there is no frame.
@@ -172,9 +161,6 @@ type unwinder struct {
 	// flags are the flags to this unwind. Some of these are updated as we
 	// unwind (see the flags documentation).
 	flags unwindFlags
-
-	// cache is used to cache pcvalue lookups.
-	// cache pcvalueCache
 }
 
 const (
@@ -198,7 +184,7 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 		frame.sp += goarchPtrSize
 	}
 
-	f := u.rti.FindFunc(uint64(frame.pc))
+	f := u.symbols.info.FindFunc(uint64(frame.pc))
 	if !f.Valid() {
 		panic("could not find func fo pc")
 		// if flags&unwindSilentErrors == 0 {
@@ -280,7 +266,7 @@ func (u *unwinder) resolveInternal(innermost bool) {
 				gp = u.mem.gMCurg(gp)
 				u.g = gp
 				frame.pc = u.mem.gSchedPc(gp)
-				frame.fn = u.rti.FindFunc(uint64(frame.pc))
+				frame.fn = u.symbols.info.FindFunc(uint64(frame.pc))
 				f = frame.fn
 				flag = f.Flag
 				frame.lr = u.mem.gSchedLr(gp)
@@ -294,7 +280,7 @@ func (u *unwinder) resolveInternal(innermost bool) {
 				flag &^= gosym.FuncFlagSPWrite
 			}
 		}
-		frame.fp = frame.sp + ptr(funcspdelta(u.rti.Pctab, f, frame.pc))
+		frame.fp = frame.sp + ptr(funcspdelta(u.symbols.info.Pctab, f, frame.pc))
 		frame.fp += goarchPtrSize
 	}
 
@@ -374,7 +360,7 @@ func (u *unwinder) next() {
 		u.finishInternal()
 		return
 	}
-	flr := u.rti.FindFunc(uint64(frame.lr))
+	flr := u.symbols.info.FindFunc(uint64(frame.lr))
 	if !flr.Valid() {
 		// This happens if you get a profiling interrupt at just the wrong time.
 		// In that context it is okay to stop early.

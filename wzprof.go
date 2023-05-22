@@ -40,15 +40,15 @@ func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 	var err error
 	switch {
 	case compiledByGo(r.mod):
-		t, lt, err := gosymTableFromModule(r.wasm)
+		s, err := buildPclntabSymbolizer(wasm, mod)
 		if err != nil {
 			return err
 		}
-		r.symbols = buildPclntabSymbolizer(t)
+		r.symbols = s
 		r.stackIterator = &goStackIteratorMaker{
-			imported: uint32(len(mod.ImportedFunctions())),
 			goStackIterator: goStackIterator{
-				unwinder: unwinder{rti: lt.RuntimeInfo()},
+				rt:       r,
+				unwinder: unwinder{symbols: s},
 			},
 		}
 	default:
@@ -73,9 +73,10 @@ type goStackIteratorMaker struct {
 	goStackIterator
 }
 
+const funcValueOffset = 0x1000
+
 func (g *goStackIteratorMaker) pcForFID(f fid) ptr {
 	// https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
-	const funcValueOffset = 0x1000
 	return ptr((funcValueOffset + f - fid(g.imported)) << 16)
 }
 

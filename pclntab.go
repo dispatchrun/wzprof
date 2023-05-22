@@ -389,25 +389,50 @@ func gosymTableFromModule(wasmbin []byte) (*gosym.Table, *gosym.LineTable, error
 	return t, lt, err
 }
 
-func buildPclntabSymbolizer(t *gosym.Table) pclntabmapper {
-	return pclntabmapper{t}
+func buildPclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntabmapper, error) {
+	t, lt, err := gosymTableFromModule(wasmbin)
+	if err != nil {
+		return nil, err
+	}
+	return &pclntabmapper{
+		t:        t,
+		info:     lt.RuntimeInfo(),
+		imported: uint64(len(mod.ImportedFunctions())),
+		modName:  mod.Name(),
+	}, nil
 }
 
 type pclntabmapper struct {
-	t *gosym.Table
+	t        *gosym.Table
+	info     gosym.RuntimeInfo
+	imported uint64
+	modName  string
 }
 
-func (p pclntabmapper) Locations(_ experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
+func (p *pclntabmapper) Locations(_ experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
 	file, line, fn := p.t.PCToLine(uint64(pc))
 	if fn == nil {
 		return uint64(pc), nil
 	}
 
 	return uint64(pc), []Location{{
-		File: file,
-		Line: int64(line),
-		// TODO: names
+		File:       file,
+		Line:       int64(line),
+		StableName: fn.Name,
+		HumanName:  fn.Name,
 	}}
+}
+
+func (p *pclntabmapper) PCToID(pc ptr) fid {
+	return fid(uint64(pc)>>16 + p.imported - funcValueOffset)
+}
+
+func (p *pclntabmapper) PCToName(pc ptr) string {
+	f := p.t.PCToFunc(uint64(pc))
+	if f == nil {
+		return ""
+	}
+	return f.Name
 }
 
 // ptr represents a unintptr in the original unwinder code. Here, the unwinder
@@ -510,6 +535,7 @@ func (r rtmem) gSchedLr(g gptr) ptr {
 }
 
 type goStackIterator struct {
+	rt *Runtime
 	unwinder
 }
 
@@ -526,7 +552,7 @@ func (s *goStackIterator) ProgramCounter() experimental.ProgramCounter {
 }
 
 func (s *goStackIterator) Function() experimental.InternalFunction {
-	return goFunction{pc: s.frame.pc}
+	return goFunction{sym: s.symbols, pc: s.frame.pc}
 }
 
 func (s *goStackIterator) Parameters() []uint64 {
@@ -537,59 +563,60 @@ func (s *goStackIterator) Parameters() []uint64 {
 var _ experimental.StackIterator = (*goStackIterator)(nil)
 
 type goFunction struct {
-	pc ptr
+	sym *pclntabmapper
+	pc  ptr
+
+	api.FunctionDefinition
 }
 
 func (f goFunction) Definition() api.FunctionDefinition {
-	return goDefinition{}
+	return f
 }
 
 func (f goFunction) SourceOffsetForPC(experimental.ProgramCounter) uint64 {
 	panic("does not make sense")
 }
 
-type goDefinition struct{}
+func (d goFunction) ModuleName() string {
+	return d.sym.modName
+}
 
-func (d goDefinition) ModuleName() string {
+func (d goFunction) Index() uint32 {
+	return uint32(d.sym.PCToID(d.pc))
+}
+
+func (d goFunction) Import() (string, string, bool) {
 	panic("implement me")
 }
 
-func (d goDefinition) Index() uint32 {
+func (d goFunction) ExportNames() []string {
 	panic("implement me")
 }
 
-func (d goDefinition) Import() (string, string, bool) {
+func (d goFunction) Name() string {
+	return d.sym.PCToName(d.pc)
+}
+
+func (d goFunction) DebugName() string {
 	panic("implement me")
 }
 
-func (d goDefinition) ExportNames() []string {
+func (d goFunction) GoFunction() interface{} {
 	panic("implement me")
 }
 
-func (d goDefinition) Name() string {
+func (d goFunction) ParamTypes() []api.ValueType {
 	panic("implement me")
 }
 
-func (d goDefinition) DebugName() string {
+func (d goFunction) ParamNames() []string {
 	panic("implement me")
 }
 
-func (d goDefinition) GoFunction() interface{} {
+func (d goFunction) ResultTypes() []api.ValueType {
 	panic("implement me")
 }
 
-func (d goDefinition) ParamTypes() []api.ValueType {
-	panic("implement me")
-}
-
-func (d goDefinition) ParamNames() []string {
-	panic("implement me")
-}
-
-func (d goDefinition) ResultTypes() []api.ValueType {
-	panic("implement me")
-}
-
-func (d goDefinition) ResultNames() []string {
+func (d goFunction) ResultNames() []string {
 	panic("implement me")
 }
