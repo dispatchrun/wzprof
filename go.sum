@@ -1,8 +1,6 @@
 github.com/google/pprof v0.0.0-20230406165453-00490a63f317 h1:hFhpt7CTmR3DX+b4R19ydQFtofxT0Sv3QsKNMVQYTMQ=
 github.com/google/pprof v0.0.0-20230406165453-00490a63f317/go.mod h1:79YE0hCXdHag9sBkw2o+N/YnZtTkXi0UT9Nnixa5eYk=
-github.com/tetratelabs/wazero v1.1.1-0.20230512012700-13e38966b6e0 h1:HlJHKQkBSPsHxseQausjzcbvU+njYSkagrWdCS7x4kU=
-github.com/tetratelabs/wazero v1.1.1-0.20230512012700-13e38966b6e0/go.mod h1:wYx2gNRg8/WihJfSDxA1TIL8H+GkfLYm+bIfbblu9VQ=
-github.com/tetratelabs/wazero v1.1.1-0.20230518073058-a8b4642ce44d h1:Bi9XudcP3+rXLPiacrad6djCv/6jedwdIdmBg4RVaCE=
-github.com/tetratelabs/wazero v1.1.1-0.20230518073058-a8b4642ce44d/go.mod h1:wYx2gNRg8/WihJfSDxA1TIL8H+GkfLYm+bIfbblu9VQ=
+github.com/tetratelabs/wazero v1.1.1-0.20230522055633-256b7a4bf970 h1:X5OOeHRjoLA8XhVc7biEbh1/hnTzpYpPn7HuyarMslQ=
+github.com/tetratelabs/wazero v1.1.1-0.20230522055633-256b7a4bf970/go.mod h1:wYx2gNRg8/WihJfSDxA1TIL8H+GkfLYm+bIfbblu9VQ=
 golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53 h1:5llv2sWeaMSnA3w2kS57ouQQ4pudlXrR0dCgw51QK9o=
 golang.org/x/exp v0.0.0-20230425010034-47ecfdc1ba53/go.mod h1:V1LtkGg67GoY2N1AnLN78QLrzxkLyJw7RJb1gzOOz9w=

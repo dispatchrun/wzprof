@@ -26,7 +26,7 @@ clean:
 test: testdata
 	go test ./...
 
-testdata: $(testdata.files)
+testdata: wasi-libc $(testdata.files)
 
 testdata/.sysroot:
 	mkdir -p testdata/.sysroot
