@@ -310,7 +310,7 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 	offset := sp + 8*(uint32(0)+1) // +1 for the return address
 	b, ok := mem.Read(offset, 8)
 	if ok {
-		si2 := prepareGoStackIterator(imod, mem, sp, fid(def.Index()))
+		//si2 := prepareGoStackIterator(imod, mem, sp, fid(def.Index()))
 
 		fmt.Println("=============================")
 
@@ -332,11 +332,7 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 			fmt.Println("\t", name)
 		}
 
-		//for si2.Next() {
-		//	fmt.Println("->", si2.ProgramCounter())
-		//}
-
-		panic("YO")
+		//		panic("YO")
 
 		p.size = binary.LittleEndian.Uint32(b)
 		p.stack = makeStackTrace(p.stack, si)

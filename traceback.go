@@ -1,7 +1,6 @@
 package wzprof
 
 import (
-	"fmt"
 	"github.com/stealthrocket/wzprof/internal/gosym"
 )
 
@@ -9,7 +8,11 @@ import (
 // modified to work on a dedicated memory object instead of the current
 // program's memory, and simplified for cases that don't concern GOARCH=wasm.
 //
-// uintptr has been replaced to uint64.
+// uintptr has been replaced to ptr, and architecture-dependent values replaced
+// for wasm. It still contains code to deal with race conditions because its was
+// little work to keep around, only involves an pointer nil check to execute,
+// and may be useful if wazero adds more concurrency when wasm threads support
+// lands.
 
 // Copyright (c) 2009 The Go Authors. All rights reserved.
 //
@@ -37,10 +40,8 @@ import (
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-// https://github.com/golang/go/blob/49ad23a6d23d6cc1666c22e4bc215f25f717b569/src/runtime/runtime2.go
-
-// A stkframe holds information about a single physical stack frame.
-// runtime/stkframe.go
+// A stkframe holds information about a single physical stack frame. Adapted
+// from runtime/stkframe.go.
 type stkframe struct {
 	// fn is the function being run in this frame. If there is
 	// inlining, this is the outermost function.
@@ -87,18 +88,6 @@ type stkframe struct {
 	fp   ptr // stack pointer at caller aka frame pointer
 	varp ptr // top of local variables
 	argp ptr // pointer to function arguments
-}
-
-// runtime/symbtab.go
-type pcvalueCache struct {
-	entries [2][8]pcvalueCacheEnt
-}
-type pcvalueCacheEnt struct {
-	// targetpc and off together are the key of this cache entry.
-	targetpc ptr
-	off      uint32
-	// val is the value of this cached pcvalue entry.
-	val int32
 }
 
 // unwindFlags control the behavior of various unwinders.
@@ -189,8 +178,8 @@ type unwinder struct {
 }
 
 const (
-	goarchPtrSize   = 8 // https://github.com/golang/go/blob/bd3f44e4ffe54e9cf841ebc8356e403bb38436bd/src/internal/goarch/goarch.go#L33
-	sysMinFrameSize = 0 // https://github.com/golang/go/blob/bd3f44e4ffe54e9cf841ebc8356e403bb38436bd/src/internal/goarch/goarch_wasm.go
+	goarchPtrSize = 8 // https://github.com/golang/go/blob/bd3f44e4ffe54e9cf841ebc8356e403bb38436bd/src/internal/goarch/goarch.go#L33
+	sysPCQuantum  = 1 // https://github.com/golang/go/blob/49ad23a6d23d6cc1666c22e4bc215f25f717b569/src/internal/goarch/goarch_wasm.go
 )
 
 func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
@@ -229,16 +218,8 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 	u.flags = flags
 	u.g = gp
 	u.calleeFuncID = gosym.FuncIDNormal
-	//*u = unwinder{
-	//	frame: frame,
-	//	// g:            gp.guintptr(),
-	//	// cgoCtxt:      len(gp.cgoCtxt) - 1,
-	//	// calleeFuncID: abi.FuncIDNormal,
-	//	flags: flags,
-	//}
 
-	isSyscall := frame.pc == pc0 && frame.sp == sp0 && pc0 == u.mem.gSyscallpc(gp) && sp0 == u.mem.gSyscallsp(gp)
-	u.resolveInternal(true, isSyscall)
+	u.resolveInternal(true)
 }
 
 func (u *unwinder) valid() bool {
@@ -248,8 +229,7 @@ func (u *unwinder) valid() bool {
 // resolveInternal fills in u.frame based on u.frame.fn, pc, and sp.
 //
 // innermost indicates that this is the first resolve on this stack. If
-// innermost is set, isSyscall indicates that the PC/SP was retrieved from
-// gp.syscall*; this is otherwise ignored.
+// innermost is set.
 //
 // On entry, u.frame contains:
 //   - fn is the running function.
@@ -266,7 +246,7 @@ func (u *unwinder) valid() bool {
 // frame state to follow that stack jump.
 //
 // This is internal to unwinder.
-func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
+func (u *unwinder) resolveInternal(innermost bool) {
 	frame := &u.frame
 	gp := u.g
 
@@ -280,19 +260,6 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 
 	// Compute function info flags.
 	flag := f.Flag
-	// if f.funcID == abi.FuncID_cgocallback {
-	// 	// cgocallback does write SP to switch from the g0 to the curg stack,
-	// 	// but it carefully arranges that during the transition BOTH stacks
-	// 	// have cgocallback frame valid for unwinding through.
-	// 	// So we don't need to exclude it with the other SP-writing functions.
-	// 	flag &^= abi.FuncFlagSPWrite
-	// }
-	// if isSyscall {
-	// 	// Some Syscall functions write to SP, but they do so only after
-	// 	// saving the entry PC/SP using entersyscall.
-	// 	// Since we are using the entry PC/SP, the later SP write doesn't matter.
-	// 	flag &^= abi.FuncFlagSPWrite
-	// }
 
 	// Found an actual function.
 	// Derive frame pointer.
@@ -318,35 +285,17 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 				flag = f.Flag
 				frame.lr = u.mem.gSchedLr(gp)
 				frame.sp = u.mem.gSchedSp(gp)
-				// u.cgoCtxt = len(gp.cgoCtxt) - 1
 			case gosym.FuncID_systemstack:
 				// systemstack returns normally, so just follow the
 				// stack transition.
-
-				// if usesLR && funcspdelta(f, frame.pc, &u.cache) == 0 {
-				// 	// We're at the function prologue and the stack
-				// 	// switch hasn't happened, or epilogue where we're
-				// 	// about to return. Just unwind normally.
-				// 	// Do this only on LR machines because on x86
-				// 	// systemstack doesn't have an SP delta (the LL
-				// 	// instruction opens the frame), therefore no way
-				//      // to check.
-				// 	flag &^= abi.FuncFlagSPWrite
-				// 	break
-				// }
-
 				gp = u.mem.gMCurg(gp)
 				u.g = gp
 				frame.sp = u.mem.gSchedSp(gp)
-				// u.cgoCtxt = len(gp.cgoCtxt) - 1
 				flag &^= gosym.FuncFlagSPWrite
 			}
 		}
 		frame.fp = frame.sp + ptr(funcspdelta(u.rti.Pctab, f, frame.pc))
-		// if !usesLR {
-		// On x86, call instruction pushes return PC before entering new function.
 		frame.fp += goarchPtrSize
-		//}
 	}
 
 	// Derive link register.
@@ -374,52 +323,19 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 			// but farther up the stack we'd better not find any.
 			if !innermost {
 				panic("traceback: unexpected SPWRITE function")
-				//				panic("traceback")
 			}
 		}
 	} else {
 		var lrPtr ptr
-		// if usesLR {
-		// 	if innermost && frame.sp < frame.fp || frame.lr == 0 {
-		// 		lrPtr = frame.sp
-		// 		frame.lr = *(*uintptr)(unsafe.Pointer(lrPtr))
-		// 	}
-		//} else {
 		if frame.lr == 0 {
 			lrPtr = frame.fp - goarchPtrSize
 			frame.lr = u.mem.derefPtr(lrPtr)
 		}
-		//}
 	}
 
 	frame.varp = frame.fp
-	// if !usesLR {
-	// On x86, call instruction pushes return PC before entering new function.
+	// On [wasm], call instruction pushes return PC before entering new function.
 	frame.varp -= goarchPtrSize
-	//}
-
-	// For architectures with frame pointers, if there's
-	// a frame, then there's a saved frame pointer here.
-	//
-	// NOTE: This code is not as general as it looks.
-	// On x86, the ABI is to save the frame pointer word at the
-	// top of the stack frame, so we have to back down over it.
-	// On arm64, the frame pointer should be at the bottom of
-	// the stack (with R29 (aka FP) = RSP), in which case we would
-	// not want to do the subtraction here. But we started out without
-	// any frame pointer, and when we wanted to add it, we didn't
-	// want to break all the assembly doing direct writes to 8(RSP)
-	// to set the first parameter to a called function.
-	// So we decided to write the FP link *below* the stack pointer
-	// (with R29 = RSP - 8 in Go functions).
-	// This is technically ABI-compatible but not standard.
-	// And it happens to end up mimicking the x86 layout.
-	// Other architectures may make different decisions.
-	// if frame.varp > frame.sp && framepointer_enabled {
-	// 	frame.varp -= goarchPtrSize
-	// }
-
-	frame.argp = frame.fp + sysMinFrameSize
 
 	// Determine frame's 'continuation PC', where it can continue.
 	// Normally this is the return address on the stack, but if sigpanic
@@ -452,7 +368,6 @@ func (u *unwinder) resolveInternal(innermost, isSyscall bool) {
 func (u *unwinder) next() {
 	frame := &u.frame
 	f := frame.fn
-	// gp := u.g.ptr()
 
 	// Do not unwind past the bottom of the stack.
 	if frame.lr == 0 {
@@ -465,22 +380,7 @@ func (u *unwinder) next() {
 		// In that context it is okay to stop early.
 		// But if no error flags are set, we're doing a garbage collection and must
 		// get everything, so crash loudly.
-		fail := u.flags&(unwindPrintErrors|unwindSilentErrors) == 0
-		doPrint := false
-		// doPrint := u.flags&unwindSilentErrors == 0
-		// if doPrint && gp.m.incgo && f.FuncID == gosym.FuncID_sigpanic {
-		// 	// We can inject sigpanic
-		// 	// calls directly into C code,
-		// 	// in which case we'll see a C
-		// 	// return PC. Don't complain.
-		// 	doPrint = false
-		// }
-		if fail || doPrint {
-			panic("this should not do print")
-			//			print("runtime: g ", gp.goid, ": unexpected return pc for ", funcname(f), " called from ", hex(frame.lr), "\n")
-			//			tracebackHexdump(gp.stack, frame, 0)
-		}
-		if fail {
+		if u.flags&(unwindPrintErrors|unwindSilentErrors) == 0 {
 			panic("unknown caller pc")
 		}
 		frame.lr = 0
@@ -510,115 +410,25 @@ func (u *unwinder) next() {
 	frame.sp = frame.fp
 	frame.fp = 0
 
-	// On link register architectures, sighandler saves the LR on stack
-	// before faking a call.
-	// if usesLR && injectedCall {
-	// 	x := *(*uintptr)(unsafe.Pointer(frame.sp))
-	// 	frame.sp += alignUp(sys.MinFrameSize, sys.StackAlign)
-	// 	f = findfunc(frame.pc)
-	// 	frame.fn = f
-	// 	if !f.valid() {
-	// 		frame.pc = x
-	// 	} else if funcspdelta(f, frame.pc, &u.cache) == 0 {
-	// 		frame.lr = x
-	// 	}
-	// }
-
-	u.resolveInternal(false, false)
+	u.resolveInternal(false)
 }
 
 // finishInternal is an unwinder-internal helper called after the stack has been
-// exhausted. It sets the unwinder to an invalid state and checks that it
-// successfully unwound the entire stack.
+// exhausted. It sets the unwinder to an invalid state.
 func (u *unwinder) finishInternal() {
 	u.frame.pc = 0
-
-	// Note that panic != nil is okay here: there can be leftover panics,
-	// because the defers on the panic stack do not nest in frame order as
-	// they do on the defer stack. If you have:
-	//
-	//	frame 1 defers d1
-	//	frame 2 defers d2
-	//	frame 3 defers d3
-	//	frame 4 panics
-	//	frame 4's panic starts running defers
-	//	frame 5, running d3, defers d4
-	//	frame 5 panics
-	//	frame 5's panic starts running defers
-	//	frame 6, running d4, garbage collects
-	//	frame 6, running d2, garbage collects
-	//
-	// During the execution of d4, the panic stack is d4 -> d3, which
-	// is nested properly, and we'll treat frame 3 as resumable, because we
-	// can find d3. (And in fact frame 3 is resumable. If d4 recovers
-	// and frame 5 continues running, d3, d3 can recover and we'll
-	// resume execution in (returning from) frame 3.)
-	//
-	// During the execution of d2, however, the panic stack is d2 -> d3,
-	// which is inverted. The scan will match d2 to frame 2 but having
-	// d2 on the stack until then means it will not match d3 to frame 3.
-	// This is okay: if we're running d2, then all the defers after d2 have
-	// completed and their corresponding frames are dead. Not finding d3
-	// for frame 3 means we'll set frame 3's continpc == 0, which is correct
-	// (frame 3 is dead). At the end of the walk the panic stack can thus
-	// contain defers (d3 in this case) for dead frames. The inversion here
-	// always indicates a dead frame, and the effect of the inversion on the
-	// scan is to hide those dead frames, so the scan is still okay:
-	// what's left on the panic stack are exactly (and only) the dead frames.
-	//
-	// We require callback != nil here because only when callback != nil
-	// do we know that gentraceback is being called in a "must be correct"
-	// context as opposed to a "best effort" context. The tracebacks with
-	// callbacks only happen when everything is stopped nicely.
-	// At other times, such as when gathering a stack for a profiling signal
-	// or when printing a traceback during a crash, everything may not be
-	// stopped nicely, and the stack walk may not be able to complete.
-	gp := u.g
-	gstktopsp := u.mem.gStktopsp(gp)
-	fmt.Println("u.frame.sp =", u.frame.sp, "AND u.mem.g.stktopsp =", gstktopsp, "flags:", u.flags)
-	if u.flags&(unwindPrintErrors|unwindSilentErrors) == 0 && u.frame.sp != gstktopsp {
-		//		print("runtime: g", gp.goid, ": frame.sp=", hex(u.frame.sp), " top=", hex(gp.stktopsp), "\n")
-		//		print("\tstack=[", hex(gp.stack.lo), "-", hex(gp.stack.hi), "\n")
-		//panic("traceback did not unwind completely")
-	}
 }
 
 func funcspdelta(pctab []byte, f *gosym.FuncInfo, targetpc ptr) int32 {
 	x, _ := pcvalue(pctab, f, f.Pcsp, targetpc, true)
-	// if debugPcln && x&(goarchPtrSize-1) != 0 {
-	// 	print("invalid spdelta ", funcname(f), " ", hex(f.entry()), " ", hex(targetpc), " ", hex(f.pcsp), " ", x, "\n")
-	// 	throw("bad spdelta")
-	// }
 	return x
 }
 
 // Returns the PCData value, and the PC where this value starts.
-// TODO: the start PC is returned only when cache is nil.
 func pcvalue(pctab []byte, f *gosym.FuncInfo, off uint32, targetpc ptr, strict bool) (int32, ptr) {
 	if off == 0 {
 		return -1, 0
 	}
-
-	// Check the cache. This speeds up walks of deep stacks, which
-	// tend to have the same recursive functions over and over.
-	//
-	// This cache is small enough that full associativity is
-	// cheaper than doing the hashing for a less associative
-	// cache.
-	// if cache != nil {
-	// 	x := pcvalueCacheKey(targetpc)
-	// 	for i := range cache.entries[x] {
-	// 		// We check off first because we're more
-	// 		// likely to have multiple entries with
-	// 		// different offsets for the same targetpc
-	// 		// than the other way around, so we'll usually
-	// 		// fail in the first clause.
-	// 		ent := &cache.entries[x][i]
-	// 		if ent.off == off && ent.targetpc == targetpc {
-	// 			return ent.val, 0
-	// 		}
-	// 	}
-	// }
 
 	if !f.Valid() {
 		panic("no module data")
@@ -628,9 +438,7 @@ func pcvalue(pctab []byte, f *gosym.FuncInfo, off uint32, targetpc ptr, strict b
 		// }
 		// return -1, 0
 	}
-	// datap := f.datap
 	p := pctab[off:]
-	// pc := f.entry()
 	pc := ptr(f.Entry)
 	prevpc := pc
 	val := int32(-1)
@@ -665,39 +473,7 @@ func pcvalue(pctab []byte, f *gosym.FuncInfo, off uint32, targetpc ptr, strict b
 	}
 
 	panic("invalid pc-encoded table")
-
-	// If there was a table, it should have covered all program counters.
-	// If not, something is wrong.
-	// if panicking.Load() != 0 || !strict {
-	// 	return -1, 0
-	// }
-
-	// print("runtime: invalid pc-encoded table f=", funcname(f), " pc=", hex(pc), " targetpc=", hex(targetpc), " tab=", p, "\n")
-
-	// pc = ptr(f.Entry)
-	// val = -1
-	// for {
-	// 	var ok bool
-	// 	p, ok = step(p, &pc, &val, pc == f.entry())
-	// 	if !ok {
-	// 		break
-	// 	}
-	// 	print("\tvalue=", val, " until pc=", hex(pc), "\n")
-	// }
-
-	// throw("invalid runtime symbol table")
-	// return -1, 0
 }
-
-// pcvalueCacheKey returns the outermost index in a pcvalueCache to use for targetpc.
-// It must be very cheap to calculate.
-// For now, align to goarch.PtrSize and reduce mod the number of entries.
-// In practice, this appears to be fairly randomly and evenly distributed.
-func pcvalueCacheKey(targetpc ptr) ptr {
-	return (targetpc / goarchPtrSize) % ptr(len(pcvalueCache{}.entries))
-}
-
-const sysPCQuantum = 1 // https://github.com/golang/go/blob/49ad23a6d23d6cc1666c22e4bc215f25f717b569/src/internal/goarch/goarch_wasm.go
 
 // step advances to the next pc, value pair in the encoded table.
 func step(p []byte, pc *ptr, val *int32, first bool) (newp []byte, ok bool) {

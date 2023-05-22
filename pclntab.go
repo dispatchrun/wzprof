@@ -820,8 +820,6 @@ func (it *funcNameIter) For(id fid) string {
 	return ""
 }
 
-const codeSecOffset = 0x001277 // offset of the code section in this wasm binary.
-
 func functionImportsCount(imports section) uint32 {
 	fncount := uint32(0)
 	b := imports.Data
@@ -893,18 +891,6 @@ func buildCodemap(code, name, imports section) codemap {
 
 		fnmap.End = offset
 		fnmaps = append(fnmaps, fnmap)
-
-		fmt.Printf("func[%d] %x-%x :: framesize=%d :: %s\n", fnmap.Id+14, fnmap.Start+codeSecOffset, fnmap.End+codeSecOffset, fnmap.Frame, fnmap.Name)
-		//if len(fnmap.Jumps) > 0 {
-		//	fmt.Printf("\tJumps:")
-		//	for i, x := range fnmap.Jumps {
-		//		fmt.Printf(" %d->%d", i, x)
-		//	}
-		//	fmt.Println("")
-		//}
-		//for i, block := range fnmap.Blocks {
-		//	fmt.Printf("\tBlock %d: %x -> %x\n", i, codeSecOffset+fnmap.Start+uint64(block[0]), codeSecOffset+fnmap.Start+uint64(block[1]))
-		//}
 	}
 
 	if len(b) != 0 {
@@ -934,20 +920,6 @@ func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	// fs := lt.RuntimeInfo()
-
-	// const funcValueOffset = 0x1000
-
-	// for pcf := codemap.imports; pcf < codemap.imports+len(codemap.fnmaps); pcf++ {
-	// 	pcb := 0
-	// 	pc := (funcValueOffset+uint64(pcf))<<16 | uint64(pcb)
-	// 	fmt.Printf("PC_F=%d, PC_B=%d, pc=%d: ", pcf, pcb, pc)
-	// 	idx := t.PCToFuncIdx(pc)
-	// 	file, line, fn := t.PCToLine(pc)
-	// 	xx := fs[idx]
-	// 	fmt.Println(file, line, fn.Name, xx)
-	// }
 
 	thecodemap = codemap
 	globalrti = lt.RuntimeInfo()
@@ -1105,18 +1077,18 @@ type ptr uint64
 
 // gptr represents a *g in the original code. It exists for the same reason as
 // ptr, but is a separate type to avoid confusion between the two. The main
-// difference is a gPtr is not supposed to have arithmetic done on it outside of
-// rtmem. Also easier to replace guintptr with a dedicated type.
+// difference is a gPtr is not supposed to have arithmetic done on it outside
+// rtmem. Also, easier to replace guintptr with a dedicated type.
 type gptr uint64
 
 // wrapper around Wazero's Memory to provide helpers for the implementation of
 // unwinder.
 //
 // Note: we could implement deref generically by reading the right number of
-// bytes for the shape and unsafe cast to the desired type. However this would
+// bytes for the shape and unsafe cast to the desired type. However, this would
 // break if the host is not little endian or uses a different pointer size type.
 // Taking the longer route here of providing dedicated function that perform
-// explicit endianess conversions, but this can probably made faster with the
+// explicit endianess conversions, but this can probably be made faster with the
 // generic method in our most common architectures.
 type rtmem struct {
 	api.Memory
@@ -1151,10 +1123,6 @@ func (r rtmem) derefPtr(p ptr) ptr {
 // 8,    10,    sched.ctxt
 // 8,    11,    sched.ret
 // 8,    12,    sched.lr
-// 8,    13,    sched.bp
-// 8,    14,    syscallsp
-// 8,    15,    syscallpc
-// 8,    16,    stktopsp
 // more fields that we don't care about
 
 // Layout of M struct:
@@ -1199,16 +1167,4 @@ func (r rtmem) gSchedPc(g gptr) ptr {
 
 func (r rtmem) gSchedLr(g gptr) ptr {
 	return ptr(r.readU64(ptr(g) + 8*12))
-}
-
-func (r rtmem) gSyscallsp(g gptr) ptr {
-	return ptr(r.readU64(ptr(g) + 8*14))
-}
-
-func (r rtmem) gSyscallpc(g gptr) ptr {
-	return ptr(r.readU64(ptr(g) + 8*15))
-}
-
-func (r rtmem) gStktopsp(g gptr) ptr {
-	return ptr(r.readU64(ptr(g) + 8*16))
 }
