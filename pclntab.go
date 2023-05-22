@@ -523,11 +523,19 @@ func (r rtmem) gSchedLr(g gptr) ptr {
 }
 
 type goStackIterator struct {
-	rt *Runtime
+	first bool
+	top   bool
+	rt    *Runtime
 	unwinder
 }
 
 func (s *goStackIterator) Next() bool {
+	if s.first {
+		s.first = false
+		return true
+	} else {
+		s.top = false
+	}
 	if !s.valid() {
 		return false
 	}
@@ -536,7 +544,11 @@ func (s *goStackIterator) Next() bool {
 }
 
 func (s *goStackIterator) ProgramCounter() experimental.ProgramCounter {
-	return experimental.ProgramCounter(s.frame.pc)
+	pc := s.frame.pc
+	if !s.top {
+		pc--
+	}
+	return experimental.ProgramCounter(pc)
 }
 
 func (s *goStackIterator) Function() experimental.InternalFunction {

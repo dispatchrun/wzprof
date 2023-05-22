@@ -76,6 +76,8 @@ func (g *goStackIteratorMaker) Make(mod api.Module, def api.FunctionDefinition, 
 	gp0 := imod.Global(2).Get()
 	pc0 := g.symbols.FIDToPC(fid(def.Index()))
 	g.initAt(ptr(pc0), ptr(sp0), 0, gptr(gp0), 0)
+	g.top = true
+	g.first = true
 	return g
 }
 
