@@ -3,7 +3,6 @@ package wzprof
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -26,6 +25,7 @@ import (
 // the program, while "inuse_objects" and "inuse_space" capture the current state
 // of the program at the time the profile is taken.
 type MemoryProfiler struct {
+	rt    *Runtime
 	mutex sync.Mutex
 	alloc stackCounterMap
 	inuse map[uint32]memoryAllocation
@@ -54,8 +54,9 @@ type memoryAllocation struct {
 
 // NewMemoryProfiler constructs a new instance of MemoryProfiler using the given
 // time function to record the profile execution time.
-func NewMemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
+func NewMemoryProfiler(rt *Runtime, options ...MemoryProfilerOption) *MemoryProfiler {
 	p := &MemoryProfiler{
+		rt:    rt,
 		alloc: make(stackCounterMap),
 		start: time.Now(),
 	}
@@ -67,9 +68,9 @@ func NewMemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
 
 // NewProfile takes a snapshot of the current memory allocation state and builds
 // a profile representing the state of the program memory.
-func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
+func (p *MemoryProfiler) NewProfile(sampleRate float64) *profile.Profile {
 	ratio := 1 / sampleRate
-	return buildProfile(symbols, p.snapshot(), p.start, time.Since(p.start), p.SampleType(),
+	return buildProfile(p.rt, p.snapshot(), p.start, time.Since(p.start), p.SampleType(),
 		[]float64{ratio, ratio, ratio, ratio},
 	)
 }
@@ -164,9 +165,9 @@ func (p *MemoryProfiler) snapshot() map[uint64]*memorySample {
 //
 // The symbolizer passed as argument is used to resolve names of program
 // locations recorded in the profile.
-func (p *MemoryProfiler) NewHandler(sampleRate float64, symbols Symbolizer) http.Handler {
+func (p *MemoryProfiler) NewHandler(sampleRate float64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serveProfile(w, p.NewProfile(sampleRate, symbols))
+		serveProfile(w, p.NewProfile(sampleRate))
 	})
 }
 
@@ -180,21 +181,21 @@ func (p *MemoryProfiler) NewFunctionListener(def api.FunctionDefinition) experim
 	switch def.Name() {
 	// C standard library, Rust
 	case "malloc":
-		return &mallocProfiler{memory: p}
+		return lrtAdapter{p.rt, &mallocProfiler{memory: p}}
 	case "calloc":
-		return &callocProfiler{memory: p}
+		return lrtAdapter{p.rt, &callocProfiler{memory: p}}
 	case "realloc":
-		return &reallocProfiler{memory: p}
+		return lrtAdapter{p.rt, &reallocProfiler{memory: p}}
 	case "free":
-		return &freeProfiler{memory: p}
+		return lrtAdapter{p.rt, &freeProfiler{memory: p}}
 
 	// Go
 	case "runtime.mallocgc":
-		return &goRuntimeMallocgcProfiler{memory: p}
+		return lrtAdapter{p.rt, &goRuntimeMallocgcProfiler{memory: p}}
 
 	// TinyGo
 	case "runtime.alloc":
-		return &mallocProfiler{memory: p}
+		return lrtAdapter{p.rt, &mallocProfiler{memory: p}}
 
 	default:
 		return nil
@@ -301,7 +302,7 @@ type goRuntimeMallocgcProfiler struct {
 	stack  stackTrace
 }
 
-func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
+func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, wasmsi experimental.StackIterator) {
 	imod := mod.(experimental.InternalModule)
 	mem := imod.Memory()
 
@@ -309,33 +310,8 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 	offset := sp + 8*(uint32(0)+1) // +1 for the return address
 	b, ok := mem.Read(offset, 8)
 	if ok {
-		// si2 := prepareGoStackIterator(imod, mem, sp, fid(def.Index()))
-
-		fmt.Println("=============================")
-
-		u := unwinder{
-			rti: globalrti,
-			mem: rtmem{mem},
-		}
-
-		// si.Next()
-		pc0 := 42
-		//		pc0 := thecodemap.FindPCF(fid(def.Index()))
-		gp0 := imod.Global(2).Get()
-		fmt.Println("INITIALIZING:")
-		u.initAt(ptr(pc0), ptr(sp), 0, gptr(gp0), 0)
-
-		fmt.Println("LOOPING! ( pc0 =", pc0, ")")
-		for ; u.valid(); u.next() {
-			fmt.Println("STACK PC:", u.frame.pc)
-			//	name := thecodemap.NameForPC(uint64(u.frame.pc))
-			//			fmt.Println("\t", name)
-		}
-
-		//		panic("YO")
-
 		p.size = binary.LittleEndian.Uint32(b)
-		p.stack = makeStackTrace(p.stack, si)
+		p.stack = makeStackTrace(p.stack, wasmsi)
 	} else {
 		p.size = 0
 	}

@@ -12,11 +12,12 @@ import (
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
-// BuildDwarfSymbolizer constructs a Symbolizer instance from the DWARF sections
+// buildDwarfSymbolizer constructs a Symbolizer instance from the DWARF sections
 // of the given WebAssembly module.
-func BuildDwarfSymbolizer(module wazero.CompiledModule) (Symbolizer, error) {
+func buildDwarfSymbolizer(module wazero.CompiledModule) (symbolizer, error) {
 	return newDwarfmapper(module.CustomSections())
 }
 
@@ -198,7 +199,12 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 	}
 }
 
-func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
+func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
+	offset := fn.SourceOffsetForPC(pc)
+	if offset == 0 {
+		return offset, nil
+	}
+
 	// TODO: replace with binary search
 
 	var spgm *subprogram
@@ -214,13 +220,13 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 		d.onceSourceOffsetNotFound.Do(func() {
 			log.Printf("dwarf: no subprogram ranges found for source offset %d (silencing similar errors now)", offset)
 		})
-		return nil
+		return offset, nil
 	}
 
 	lr, err := d.d.LineReader(spgm.CU)
 	if err != nil || lr == nil {
 		log.Printf("dwarf: failed to read lines: %s\n", err)
-		return nil
+		return offset, nil
 	}
 
 	// TODO: cache this
@@ -244,7 +250,7 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 	if i == len(lines) {
 		// no line information for this source offset.
 		log.Printf("dwarf: no line information for source offset %d", offset)
-		return nil
+		return offset, nil
 	}
 
 	l := lines[i]
@@ -259,7 +265,7 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 		// https://github.com/kateinoigakukun/wasminspect/blob/f29f052f1b03104da9f702508ac0c1bbc3530ae4/crates/debugger/src/dwarf/mod.rs#L453-L459
 		if i-1 < 0 {
 			log.Printf("dwarf: first line address does not match source (line=%d offset=%d)", l.Address, offset)
-			return nil
+			return offset, nil
 		}
 		l = lines[i-1]
 	}
@@ -275,13 +281,12 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 	human, stable := d.namesForSubprogram(spgm.Entry, spgm)
 	locations := make([]Location, 0, 1+len(spgm.Inlines))
 	locations = append(locations, Location{
-		File:         le.File.Name,
-		Line:         int64(le.Line),
-		Column:       int64(le.Column),
-		Inlined:      len(spgm.Inlines) > 0,
-		SourceOffset: offset,
-		HumanName:    human,
-		StableName:   stable,
+		File:       le.File.Name,
+		Line:       int64(le.Line),
+		Column:     int64(le.Column),
+		Inlined:    len(spgm.Inlines) > 0,
+		HumanName:  human,
+		StableName: stable,
 	})
 
 	if len(spgm.Inlines) > 0 {
@@ -298,18 +303,17 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 			col, _ := f.Val(dwarf.AttrCallLine).(int64)
 			human, stable := d.namesForSubprogram(f, nil)
 			locations = append(locations, Location{
-				File:         file.Name,
-				Line:         line,
-				Column:       col,
-				Inlined:      i != 0,
-				SourceOffset: offset,
-				StableName:   stable,
-				HumanName:    human,
+				File:       file.Name,
+				Line:       line,
+				Column:     col,
+				Inlined:    i != 0,
+				StableName: stable,
+				HumanName:  human,
 			})
 		}
 	}
 
-	return locations
+	return offset, locations
 }
 
 // line is used to cache line entries for a given compilation unit.

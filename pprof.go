@@ -84,7 +84,7 @@ func sortProfiles(entries []profileEntry) {
 //
 // Handler responds to a request for "/debug/pprof/" with an HTML page listing
 // the available profiles.
-func Handler(sampleRate float64, symbols Symbolizer, profilers ...Profiler) http.Handler {
+func Handler(sampleRate float64, profilers ...Profiler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var guest, host []profileEntry
 
@@ -94,7 +94,7 @@ func Handler(sampleRate float64, symbols Symbolizer, profilers ...Profiler) http
 				Href:    p.Name(),
 				Desc:    p.Desc(),
 				Count:   p.Count(),
-				Handler: p.NewHandler(sampleRate, symbols),
+				Handler: p.NewHandler(sampleRate),
 			})
 		}
 

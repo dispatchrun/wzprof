@@ -8,6 +8,7 @@ import (
 	"github.com/stealthrocket/wzprof/internal/gosym"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 )
 
 const (
@@ -17,9 +18,13 @@ const (
 	dataSectionId   = 11
 )
 
-func compiledByGo(b []byte) bool {
-	s := wasmbinSection(b, customSectionId, "go:buildid")
-	return s.Valid()
+func compiledByGo(mod wazero.CompiledModule) bool {
+	for _, s := range mod.CustomSections() {
+		if s.Name() == "go:buildid" {
+			return true
+		}
+	}
+	return false
 }
 
 type section struct {
@@ -279,24 +284,14 @@ func pclntabFromData(data section) []byte {
 	}
 
 	nfunctab := readWord(0)
-	nfiletab := readWord(1)
-	pcstart := readWord(2)
-	funcnametabAddr := readWord(3)
-	cutabAddr := readWord(4)
-	filetabAddr := readWord(5)
-	pctabAddr := readWord(6)
-	funcdataAddr := readWord(7)
+	// nfiletab := readWord(1)
+	// pcstart := readWord(2)
+	// funcnametabAddr := readWord(3)
+	// cutabAddr := readWord(4)
+	// filetabAddr := readWord(5)
+	// pctabAddr := readWord(6)
+	// funcdataAddr := readWord(7)
 	functabAddr := readWord(7)
-
-	fmt.Println("nfunctab:", nfunctab)
-	fmt.Println("nfiletab:", nfiletab)
-	fmt.Println("pcstart:", pcstart)
-	fmt.Println("funcnametabAddr:", funcnametabAddr)
-	fmt.Println("cutabAddr:", cutabAddr)
-	fmt.Println("filetabAddr:", filetabAddr)
-	fmt.Println("pctabAddr:", pctabAddr)
-	fmt.Println("funcdataAddr:", funcdataAddr)
-	fmt.Println("functabAddr:", functabAddr)
 
 	functabFieldSize := 4
 
@@ -386,41 +381,31 @@ type fid int
 // excludes imports. In a given module, fidx = fid-imports.
 type fidx int
 
+func gosymTableFromModule(wasmbin []byte) (*gosym.Table, *gosym.LineTable, error) {
+	data := wasmbinSection(wasmbin, dataSectionId, "")
+	pclntab := pclntabFromData(data)
+	lt := gosym.NewLineTable(pclntab, 0)
+	t, err := gosym.NewTable(nil, lt)
+	return t, lt, err
+}
+
+func buildPclntabSymbolizer(t *gosym.Table) pclntabmapper {
+	return pclntabmapper{t}
+}
+
 type pclntabmapper struct {
 	t *gosym.Table
 }
 
-var globalrti gosym.RuntimeInfo
-
-func BuildPclntabSymbolizer(wasmbin []byte) (Symbolizer, error) {
-	data := wasmbinSections(wasmbin)
-	pclntab := pclntabFromData(data)
-
-	lt := gosym.NewLineTable(pclntab, 0)
-	t, err := gosym.NewTable(nil, lt)
-	if err != nil {
-		return nil, err
-	}
-
-	globalrti = lt.RuntimeInfo()
-
-	return pclntabmapper{
-		t: t,
-	}, nil
-}
-
-func (p pclntabmapper) LocationsForSourceOffset(offset uint64) []Location {
-	var pc uint64
-
-	file, line, fn := p.t.PCToLine(pc)
+func (p pclntabmapper) Locations(_ experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
+	file, line, fn := p.t.PCToLine(uint64(pc))
 	if fn == nil {
-		return nil
+		return uint64(pc), nil
 	}
 
-	return []Location{{
-		File:         file,
-		Line:         int64(line),
-		SourceOffset: pc,
+	return uint64(pc), []Location{{
+		File: file,
+		Line: int64(line),
 		// TODO: names
 	}}
 }
@@ -522,4 +507,89 @@ func (r rtmem) gSchedPc(g gptr) ptr {
 
 func (r rtmem) gSchedLr(g gptr) ptr {
 	return ptr(r.readU64(ptr(g) + 8*12))
+}
+
+type goStackIterator struct {
+	unwinder
+}
+
+func (s *goStackIterator) Next() bool {
+	if !s.valid() {
+		return false
+	}
+	s.next()
+	return true
+}
+
+func (s *goStackIterator) ProgramCounter() experimental.ProgramCounter {
+	return experimental.ProgramCounter(s.frame.pc)
+}
+
+func (s *goStackIterator) Function() experimental.InternalFunction {
+	return goFunction{pc: s.frame.pc}
+}
+
+func (s *goStackIterator) Parameters() []uint64 {
+	// TODO
+	return nil
+}
+
+var _ experimental.StackIterator = (*goStackIterator)(nil)
+
+type goFunction struct {
+	pc ptr
+}
+
+func (f goFunction) Definition() api.FunctionDefinition {
+	return goDefinition{}
+}
+
+func (f goFunction) SourceOffsetForPC(experimental.ProgramCounter) uint64 {
+	panic("does not make sense")
+}
+
+type goDefinition struct{}
+
+func (d goDefinition) ModuleName() string {
+	panic("implement me")
+}
+
+func (d goDefinition) Index() uint32 {
+	panic("implement me")
+}
+
+func (d goDefinition) Import() (string, string, bool) {
+	panic("implement me")
+}
+
+func (d goDefinition) ExportNames() []string {
+	panic("implement me")
+}
+
+func (d goDefinition) Name() string {
+	panic("implement me")
+}
+
+func (d goDefinition) DebugName() string {
+	panic("implement me")
+}
+
+func (d goDefinition) GoFunction() interface{} {
+	panic("implement me")
+}
+
+func (d goDefinition) ParamTypes() []api.ValueType {
+	panic("implement me")
+}
+
+func (d goDefinition) ParamNames() []string {
+	panic("implement me")
+}
+
+func (d goDefinition) ResultTypes() []api.ValueType {
+	panic("implement me")
+}
+
+func (d goDefinition) ResultNames() []string {
+	panic("implement me")
 }

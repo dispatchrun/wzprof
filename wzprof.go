@@ -1,6 +1,7 @@
 package wzprof
 
 import (
+	"context"
 	"fmt"
 	"hash/maphash"
 	"net/http"
@@ -10,10 +11,104 @@ import (
 	"unsafe"
 
 	"github.com/google/pprof/profile"
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 	"golang.org/x/exp/slices"
 )
+
+type stackIteratorMaker interface {
+	Make(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
+}
+
+type Runtime struct {
+	wasm []byte
+	mod  wazero.CompiledModule
+
+	symbols       symbolizer
+	stackIterator stackIteratorMaker
+}
+
+func NewRuntime() *Runtime {
+	return &Runtime{}
+}
+
+func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
+	r.wasm = wasm
+	r.mod = mod
+
+	var err error
+	switch {
+	case compiledByGo(r.mod):
+		t, lt, err := gosymTableFromModule(r.wasm)
+		if err != nil {
+			return err
+		}
+		r.symbols = buildPclntabSymbolizer(t)
+		r.stackIterator = &goStackIteratorMaker{
+			imported: uint32(len(mod.ImportedFunctions())),
+			goStackIterator: goStackIterator{
+				unwinder: unwinder{rti: lt.RuntimeInfo()},
+			},
+		}
+	default:
+		r.symbols, err = buildDwarfSymbolizer(r.mod)
+		r.stackIterator = wasmStackIteratorMaker{}
+	}
+	if err != nil {
+		r.symbols = noopsymbolizer{}
+	}
+
+	return nil
+}
+
+type wasmStackIteratorMaker struct{}
+
+func (w wasmStackIteratorMaker) Make(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
+	return wasmsi
+}
+
+type goStackIteratorMaker struct {
+	imported uint32
+	goStackIterator
+}
+
+func (g *goStackIteratorMaker) pcForFID(f fid) ptr {
+	// https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
+	const funcValueOffset = 0x1000
+	return ptr((funcValueOffset + f - fid(g.imported)) << 16)
+}
+
+func (g *goStackIteratorMaker) Make(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
+	imod := mod.(experimental.InternalModule)
+	mem := imod.Memory()
+	g.mem = rtmem{mem}
+	sp0 := uint32(imod.Global(0).Get())
+	gp0 := imod.Global(2).Get()
+	pc0 := g.pcForFID(fid(def.Index()))
+	g.initAt(ptr(pc0), ptr(sp0), 0, gptr(gp0), 0)
+	return g
+}
+
+// lrtAdapter wraps a FunctionListener to adapt its stack iterator to the
+// appropriate implementation according to the module runtime.
+type lrtAdapter struct {
+	rt *Runtime
+	l  experimental.FunctionListener
+}
+
+func (a lrtAdapter) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
+	si = a.rt.stackIterator.Make(mod, def, si)
+	a.l.Before(ctx, mod, def, params, si)
+}
+
+func (a lrtAdapter) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
+	a.l.After(ctx, mod, def, results)
+}
+
+func (a lrtAdapter) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error) {
+	a.l.Abort(ctx, mod, def, err)
+}
 
 // Profiler is an interface implemented by all profiler types available in this
 // package.
@@ -33,7 +128,7 @@ type Profiler interface {
 	SampleType() []*profile.ValueType
 
 	// Returns a new http handler suited to expose profiles on a pprof endpoint.
-	NewHandler(sampleRate float64, symbols Symbolizer) http.Handler
+	NewHandler(sampleRate float64) http.Handler
 }
 
 var (
@@ -54,34 +149,42 @@ func WriteProfile(path string, prof *profile.Profile) error {
 	return prof.Write(w)
 }
 
-type Symbolizer interface {
-	// LocationsForSourceOffset returns a list of function locations for a given
-	// source offset, starting from current function followed by the inlined
-	// functions, in order of inlining. Result if empty if the pc cannot be
-	// resolved in the dwarf data.
-	LocationsForSourceOffset(offset uint64) []Location
+type symbolizer interface {
+	// Locations returns a list of function locations for a given program
+	// counter, and the address it found them at. Locations start from
+	// current function followed by the inlined functions, in order of
+	// inlining. Result if empty if the pc cannot be resolved.
+	Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location)
+}
+
+type noopsymbolizer struct{}
+
+func (s noopsymbolizer) Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
+	return 0, nil
 }
 
 type Location struct {
-	File         string
-	Line         int64
-	Column       int64
-	Inlined      bool
-	SourceOffset uint64
+	File    string
+	Line    int64
+	Column  int64
+	Inlined bool
 	// Linkage Name if present, Name otherwise.
 	// Only present for inlined functions.
 	StableName string
 	HumanName  string
 }
 
-func locationForCall(symbols Symbolizer, def api.FunctionDefinition, offset uint64, funcs map[string]*profile.Function) []profile.Line {
+func locationForCall(rt *Runtime, fn experimental.InternalFunction, pc experimental.ProgramCounter, funcs map[string]*profile.Function) *profile.Location {
 	// Cache miss. Get or create function and all the line
 	// locations associated with inlining.
 	var locations []Location
 	var symbolFound bool
+	def := fn.Definition()
 
-	if symbols != nil && offset > 0 {
-		locations = symbols.LocationsForSourceOffset(offset)
+	location := &profile.Location{}
+
+	if pc > 0 {
+		location.Address, locations = rt.symbols.Locations(fn, pc)
 		symbolFound = len(locations) > 0
 	}
 	if len(locations) == 0 {
@@ -129,7 +232,8 @@ func locationForCall(symbols Symbolizer, def api.FunctionDefinition, offset uint
 		}
 	}
 
-	return lines
+	location.Line = lines
+	return location
 }
 
 type locationKey struct {
@@ -272,7 +376,7 @@ type sampleType interface {
 	sampleValue() []int64
 }
 
-func buildProfile[T sampleType](symbols Symbolizer, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType, ratios []float64) *profile.Profile {
+func buildProfile[T sampleType](r *Runtime, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType, ratios []float64) *profile.Profile {
 	prof := &profile.Profile{
 		SampleType:    sampleType,
 		Sample:        make([]*profile.Sample, 0, len(samples)),
@@ -296,12 +400,8 @@ func buildProfile[T sampleType](symbols Symbolizer, samples map[uint64]T, start 
 			key := makeLocationKey(def, pc)
 			loc := locationCache[key]
 			if loc == nil {
-				off := fn.SourceOffsetForPC(pc)
-				loc = &profile.Location{
-					ID:      locationID,
-					Line:    locationForCall(symbols, def, off, functionCache),
-					Address: off,
-				}
+				loc = locationForCall(r, fn, pc, functionCache)
+				loc.ID = locationID
 				locationID++
 				locationCache[key] = loc
 			}
