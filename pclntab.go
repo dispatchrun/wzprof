@@ -390,13 +390,13 @@ type pclntabmapper struct {
 	modName  string
 }
 
-func (p *pclntabmapper) Locations(_ experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
+func (p *pclntabmapper) Locations(_ experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
 	file, line, fn := p.t.PCToLine(uint64(pc))
 	if fn == nil {
 		return uint64(pc), nil
 	}
 
-	return uint64(pc), []Location{{
+	return uint64(pc), []location{{
 		File:       file,
 		Line:       int64(line),
 		StableName: fn.Name,

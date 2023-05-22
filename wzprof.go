@@ -22,9 +22,6 @@ type stackIteratorMaker interface {
 }
 
 type Runtime struct {
-	wasm []byte
-	mod  wazero.CompiledModule
-
 	symbols       symbolizer
 	stackIterator stackIteratorMaker
 }
@@ -37,11 +34,8 @@ func NewRuntime() *Runtime {
 }
 
 func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
-	r.wasm = wasm
-	r.mod = mod
-
 	switch {
-	case compiledByGo(r.mod):
+	case compiledByGo(mod):
 		s, err := buildPclntabSymbolizer(wasm, mod)
 		if err != nil {
 			return err
@@ -54,7 +48,7 @@ func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 			},
 		}
 	default:
-		r.symbols, _ = buildDwarfSymbolizer(r.mod) // TODO: surface error as warning?
+		r.symbols, _ = buildDwarfSymbolizer(mod) // TODO: surface error as warning?
 	}
 
 	return nil
@@ -114,19 +108,21 @@ func (a lrtAdapter) Abort(ctx context.Context, mod api.Module, def api.FunctionD
 type Profiler interface {
 	experimental.FunctionListenerFactory
 
-	// Returns the name of the profiler.
+	// Name of the profiler.
 	Name() string
 
-	// Returns a human readble description of the profiler.
+	// Desc is a human-readable description of the profiler.
 	Desc() string
 
-	// Returns the number of execution stacks recorded in the profiler.
+	// Count the number of execution stacks recorded in the profiler.
 	Count() int
 
-	// Returns the set of value types present in samples recorded by the profiler.
+	// SampleType returns the set of value types present in samples recorded by
+	// the profiler.
 	SampleType() []*profile.ValueType
 
-	// Returns a new http handler suited to expose profiles on a pprof endpoint.
+	// NewHandler returns a new http handler suited to expose profiles on a
+	// pprof endpoint.
 	NewHandler(sampleRate float64) http.Handler
 }
 
@@ -153,16 +149,16 @@ type symbolizer interface {
 	// counter, and the address it found them at. Locations start from
 	// current function followed by the inlined functions, in order of
 	// inlining. Result if empty if the pc cannot be resolved.
-	Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location)
+	Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location)
 }
 
 type noopsymbolizer struct{}
 
-func (s noopsymbolizer) Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
+func (s noopsymbolizer) Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
 	return 0, nil
 }
 
-type Location struct {
+type location struct {
 	File    string
 	Line    int64
 	Column  int64
@@ -176,20 +172,20 @@ type Location struct {
 func locationForCall(rt *Runtime, fn experimental.InternalFunction, pc experimental.ProgramCounter, funcs map[string]*profile.Function) *profile.Location {
 	// Cache miss. Get or create function and all the line
 	// locations associated with inlining.
-	var locations []Location
+	var locations []location
 	var symbolFound bool
 	def := fn.Definition()
 
-	location := &profile.Location{}
+	out := &profile.Location{}
 
 	if pc > 0 {
-		location.Address, locations = rt.symbols.Locations(fn, pc)
+		out.Address, locations = rt.symbols.Locations(fn, pc)
 		symbolFound = len(locations) > 0
 	}
 	if len(locations) == 0 {
 		// If we don't have a source location, attach to a
 		// generic location within the function.
-		locations = []Location{{}}
+		locations = []location{{}}
 	}
 	// Provide defaults in case we couldn't resolve DWARF information for
 	// the main function call's PC.
@@ -231,8 +227,8 @@ func locationForCall(rt *Runtime, fn experimental.InternalFunction, pc experimen
 		}
 	}
 
-	location.Line = lines
-	return location
+	out.Line = lines
+	return out
 }
 
 type locationKey struct {

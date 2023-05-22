@@ -199,7 +199,7 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 	}
 }
 
-func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []Location) {
+func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
 	offset := fn.SourceOffsetForPC(pc)
 	if offset == 0 {
 		return offset, nil
@@ -279,8 +279,8 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 	}
 
 	human, stable := d.namesForSubprogram(spgm.Entry, spgm)
-	locations := make([]Location, 0, 1+len(spgm.Inlines))
-	locations = append(locations, Location{
+	locations := make([]location, 0, 1+len(spgm.Inlines))
+	locations = append(locations, location{
 		File:       le.File.Name,
 		Line:       int64(le.Line),
 		Column:     int64(le.Column),
@@ -302,7 +302,7 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 			line, _ := f.Val(dwarf.AttrCallLine).(int64)
 			col, _ := f.Val(dwarf.AttrCallLine).(int64)
 			human, stable := d.namesForSubprogram(f, nil)
-			locations = append(locations, Location{
+			locations = append(locations, location{
 				File:       file.Name,
 				Line:       line,
 				Column:     col,
