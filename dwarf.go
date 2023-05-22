@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -36,12 +37,15 @@ type subprogramRange struct {
 type dwarfmapper struct {
 	d           *dwarf.Data
 	subprograms []subprogramRange
+	// once value used to limit the logging output on error
+	onceSourceOffsetNotFound sync.Once
 }
 
 func newDwarfmapper(sections []api.CustomSection) (*dwarfmapper, error) {
 	var info, line, ranges, str, abbrev []byte
 
 	for _, section := range sections {
+		log.Printf("dwarf: found section %s", section.Name())
 		switch section.Name() {
 		case ".debug_info":
 			info = section.Data()
@@ -65,6 +69,7 @@ func newDwarfmapper(sections []api.CustomSection) (*dwarfmapper, error) {
 
 	p := dwarfparser{d: d, r: r}
 	subprograms := p.Parse()
+	log.Printf("dwarf: parsed %d subprogramm ranges", len(subprograms))
 
 	dm := &dwarfmapper{
 		d:           d,
@@ -161,7 +166,7 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 
 	ranges, err := d.d.Ranges(e)
 	if err != nil {
-		log.Printf("profiler: dwarf: failed to read ranges: %s\n", err)
+		log.Printf("dwarf: failed to read ranges: %s\n", err)
 		return
 	}
 
@@ -206,12 +211,15 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 	}
 
 	if spgm == nil {
+		d.onceSourceOffsetNotFound.Do(func() {
+			log.Printf("dwarf: no subprogram ranges found for source offset %d (silencing similar errors now)", offset)
+		})
 		return nil
 	}
 
 	lr, err := d.d.LineReader(spgm.CU)
 	if err != nil || lr == nil {
-		log.Printf("profiler: dwarf: failed to read lines: %s\n", err)
+		log.Printf("dwarf: failed to read lines: %s\n", err)
 		return nil
 	}
 
@@ -225,7 +233,7 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 			break
 		}
 		if err != nil {
-			log.Printf("profiler: dwarf: failed to iterate on lines: %s\n", err)
+			log.Printf("dwarf: failed to iterate on lines: %s\n", err)
 			break
 		}
 		lines = append(lines, line{Pos: pos, Address: le.Address})
@@ -235,6 +243,7 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 	i := sort.Search(len(lines), func(i int) bool { return lines[i].Address >= offset })
 	if i == len(lines) {
 		// no line information for this source offset.
+		log.Printf("dwarf: no line information for source offset %d", offset)
 		return nil
 	}
 
@@ -249,6 +258,7 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 		// https://github.com/gimli-rs/addr2line/blob/3a2dbaf84551a06a429f26e9c96071bb409b371f/src/lib.rs#L236-L242
 		// https://github.com/kateinoigakukun/wasminspect/blob/f29f052f1b03104da9f702508ac0c1bbc3530ae4/crates/debugger/src/dwarf/mod.rs#L453-L459
 		if i-1 < 0 {
+			log.Printf("dwarf: first line address does not match source (line=%d offset=%d)", l.Address, offset)
 			return nil
 		}
 		l = lines[i-1]
@@ -259,7 +269,7 @@ func (d *dwarfmapper) LocationsForSourceOffset(offset uint64) []Location {
 	if err != nil {
 		// l.Pos was created from parsing dwarf, should not
 		// happen.
-		panic("bug")
+		panic("BUG: l.Pos was created from parsing dwarf but got error: " + err.Error())
 	}
 
 	human, stable := d.namesForSubprogram(spgm.Entry, spgm)
