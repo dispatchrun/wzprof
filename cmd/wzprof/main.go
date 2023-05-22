@@ -54,7 +54,7 @@ func (prog *program) run(ctx context.Context) error {
 	wasmName := filepath.Base(prog.filePath)
 	wasmCode, err := os.ReadFile(prog.filePath)
 	if err != nil {
-		return fmt.Errorf("loading wasm module: %w", err)
+		return fmt.Errorf("reading wasm module: %w", err)
 	}
 
 	cpu := wzprof.NewCPUProfiler(wzprof.HostTime(prog.hostTime))

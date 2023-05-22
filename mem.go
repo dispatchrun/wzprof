@@ -296,10 +296,9 @@ func (p *freeProfiler) Abort(ctx context.Context, mod api.Module, def api.Functi
 }
 
 type goRuntimeMallocgcProfiler struct {
-	codemap codemap
-	memory  *MemoryProfiler
-	size    uint32
-	stack   stackTrace
+	memory *MemoryProfiler
+	size   uint32
+	stack  stackTrace
 }
 
 func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
@@ -310,7 +309,7 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 	offset := sp + 8*(uint32(0)+1) // +1 for the return address
 	b, ok := mem.Read(offset, 8)
 	if ok {
-		//si2 := prepareGoStackIterator(imod, mem, sp, fid(def.Index()))
+		// si2 := prepareGoStackIterator(imod, mem, sp, fid(def.Index()))
 
 		fmt.Println("=============================")
 
@@ -319,8 +318,9 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 			mem: rtmem{mem},
 		}
 
-		//si.Next()
-		pc0 := thecodemap.FindPCF(fid(def.Index()))
+		// si.Next()
+		pc0 := 42
+		//		pc0 := thecodemap.FindPCF(fid(def.Index()))
 		gp0 := imod.Global(2).Get()
 		fmt.Println("INITIALIZING:")
 		u.initAt(ptr(pc0), ptr(sp), 0, gptr(gp0), 0)
@@ -328,8 +328,8 @@ func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, 
 		fmt.Println("LOOPING! ( pc0 =", pc0, ")")
 		for ; u.valid(); u.next() {
 			fmt.Println("STACK PC:", u.frame.pc)
-			name := thecodemap.NameForPC(uint64(u.frame.pc))
-			fmt.Println("\t", name)
+			//	name := thecodemap.NameForPC(uint64(u.frame.pc))
+			//			fmt.Println("\t", name)
 		}
 
 		//		panic("YO")
