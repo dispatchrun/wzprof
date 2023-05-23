@@ -540,7 +540,7 @@ func (s *goStackIterator) Next() bool {
 		return false
 	}
 	s.next()
-	return true
+	return s.valid()
 }
 
 func (s *goStackIterator) ProgramCounter() experimental.ProgramCounter {
