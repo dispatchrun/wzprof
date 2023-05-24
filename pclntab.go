@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"unsafe"
 
 	"github.com/stealthrocket/wzprof/internal/gosym"
 	"github.com/tetratelabs/wazero"
@@ -203,6 +204,13 @@ func (d *dataIterator) SkipToDataOffset(offset int) (int64, []byte) {
 	return 0, nil
 }
 
+type partialPCHeader struct {
+	address        uint64
+	funcnametabOff uint64
+	cutabOff       uint64
+	filetabOff     uint64
+}
+
 // pclntabFromData rebuilds the full pclntab from the segments of the Data
 // section of the module (b).
 //
@@ -211,13 +219,13 @@ func (d *dataIterator) SkipToDataOffset(offset int) (int64, []byte) {
 // whether pclntab contains actual useful data.
 //
 // See layout in the linker: https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L169-L185
-func pclntabFromData(data section) []byte {
+func pclntabFromData(data section) (partialPCHeader, []byte) {
 	b := data.Data
 	// magic number of the start of pclntab for Go 1.20, little endian.
 	magic := []byte{0xf1, 0xff, 0xff, 0xff, 0x00, 0x00}
 	pclntabOffset := bytes.Index(b, magic)
 	if pclntabOffset == -1 {
-		return nil
+		return partialPCHeader{}, nil
 	}
 
 	d := newDataIterator(b)
@@ -271,9 +279,9 @@ func pclntabFromData(data section) []byte {
 	nfunctab := readWord(0)
 	// nfiletab := readWord(1)
 	// pcstart := readWord(2)
-	// funcnametabAddr := readWord(3)
-	// cutabAddr := readWord(4)
-	// filetabAddr := readWord(5)
+	funcnametabOff := readWord(3)
+	cutabOff := readWord(4)
+	filetabOff := readWord(5)
 	// pctabAddr := readWord(6)
 	// funcdataAddr := readWord(7)
 	functabAddr := readWord(7)
@@ -300,7 +308,89 @@ func pclntabFromData(data section) []byte {
 		panic("reconstructed pclntab should at least include end of functab")
 	}
 
+	pch := partialPCHeader{
+		address:        uint64(vaddr),
+		funcnametabOff: funcnametabOff,
+		cutabOff:       cutabOff,
+		filetabOff:     filetabOff,
+	}
+
+	return pch, vm.b
+}
+
+// moduledataFromData searches the data sectement to find and reconstruct the
+// firstmoduledata struct embedded in the module.
+//
+// It is tricky because there is no marker to tell us where it starts. So
+// instead we look for pointers it should contain in specific fields. We compute
+// those pointers from the partial contents of the pclntab we already found.
+//
+// We know all those addresses are in the same data segment, but the whole
+// moduledata may not be.
+func moduledataFromData(pch partialPCHeader, data section) []byte {
+
+	start := make([]byte, 16) // pchaddr and funcnametabaddr are one after the other.
+	binary.LittleEndian.PutUint64(start[:8], pch.address)
+	binary.LittleEndian.PutUint64(start[8:], pch.address+pch.funcnametabOff)
+	cutabaddr := make([]byte, 8)
+	binary.LittleEndian.PutUint64(cutabaddr, pch.address+pch.cutabOff)
+	filetabaddr := make([]byte, 8)
+	binary.LittleEndian.PutUint64(filetabaddr, pch.address+pch.filetabOff)
+
+	b := data.Data
+	offset := findStartOfModuleData(b, start, cutabaddr, filetabaddr)
+
+	if offset == -1 {
+		fmt.Println("Warning: could not find moduledata bytes in data segments")
+		return nil
+	}
+
+	d := newDataIterator(b)
+	vaddr, seg := d.SkipToDataOffset(offset)
+	fmt.Println(vaddr, len(seg))
+	vm := vmem{Start: vaddr}
+	vm.CopyAtAddress(vaddr, seg)
+
+	size := int(unsafe.Sizeof(moduledata{}))
+
+	// fill the vm with segments until it has enough data
+	for !vm.Has(size) {
+		vaddr, seg := d.Next()
+		if seg == nil {
+			panic("no more segment")
+		}
+		vm.CopyAtAddress(vaddr, seg)
+	}
+
 	return vm.b
+}
+
+// returns -1 if not found
+func findStartOfModuleData(b, start, cutabaddr, filetabaddr []byte) int {
+	// offset 0: pch.addr
+	// offset 8: funcnametab address
+	// offset 32: cutab address
+	// offset 56: filetab address
+	for begin := 0; begin < len(b); {
+		startIndex := bytes.Index(b[begin:], start)
+		if startIndex < -1 {
+			return -1
+		}
+		i := startIndex + 32
+		if !bytes.Equal(b[i:i+8], cutabaddr) {
+			begin = startIndex + 1
+			continue
+		}
+
+		i = startIndex + 56
+		if !bytes.Equal(b[i:i+8], filetabaddr) {
+			begin = startIndex + 1
+			continue
+		}
+
+		return begin + startIndex
+	}
+	return -1
 }
 
 // vmem is a helper to rebuild virtual memory from data segments.
@@ -364,7 +454,8 @@ type fidx int
 
 func gosymTableFromModule(wasmbin []byte) (*gosym.Table, *gosym.LineTable, error) {
 	data := wasmdataSection(wasmbin)
-	pclntab := pclntabFromData(data)
+	pch, pclntab := pclntabFromData(data)
+	moduledataFromData(pch, data)
 	lt := gosym.NewLineTable(pclntab, 0)
 	t, err := gosym.NewTable(nil, lt)
 	return t, lt, err
@@ -562,6 +653,9 @@ func (s *goStackIterator) Parameters() []uint64 {
 
 var _ experimental.StackIterator = (*goStackIterator)(nil)
 
+// goFunction is a lazy implementation of wazero's FunctionDefinition and
+// InternalFunction, as the goStackIterator cannot map to an internal *function
+// in wazero.
 type goFunction struct {
 	sym *pclntabmapper
 	pc  ptr
@@ -619,4 +713,62 @@ func (f goFunction) ResultTypes() []api.ValueType {
 
 func (f goFunction) ResultNames() []string {
 	panic("implement me")
+}
+
+type functab struct {
+	entryoff uint32 // relative to runtime.text
+	funcoff  uint32
+}
+
+type moduledata struct {
+	//	sys.NotInHeap // Only in static data
+
+	pcHeader    ptr       // 0
+	funcnametab []byte    // 8
+	cutab       []uint32  // 32
+	filetab     []byte    // 56
+	pctab       []byte    // 80
+	pclntable   []byte    // 104
+	ftab        []functab // 128
+	findfunctab ptr       // 152
+
+	minpc ptr
+	maxpc ptr
+
+	text, etext           ptr
+	noptrdata, enoptrdata ptr
+	data, edata           ptr
+	bss, ebss             ptr
+	noptrbss, enoptrbss   ptr
+	covctrs, ecovctrs     ptr
+	end, gcdata, gcbss    ptr
+	types, etypes         ptr
+	rodata                ptr
+	gofunc                ptr // go.func.*
+	//
+	//textsectmap []textsect
+	//typelinks   []int32 // offsets from types
+	//itablinks   []*itab
+	//
+	//ptab []ptabEntry
+	//
+	//pluginpath string
+	//pkghashes  []modulehash
+	//
+	//// This slice records the initializing tasks that need to be
+	//// done to start up the program. It is built by the linker.
+	//inittasks []*initTask
+	//
+	//modulename   string
+	//modulehashes []modulehash
+	//
+	//hasmain uint8 // 1 if module contains the main function, 0 otherwise
+	//
+	//gcdatamask, gcbssmask bitvector
+	//
+	//typemap map[uint32]uintptr // offset to *_rtype in previous module
+	//
+	//bad bool // module failed to load and should be ignored
+	//
+	//next *moduledata
 }
