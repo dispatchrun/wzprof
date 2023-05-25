@@ -731,7 +731,8 @@ func (f goFunction) DebugName() string {
 }
 
 func (f goFunction) GoFunction() interface{} {
-	panic("implement me")
+	// This is never a host function
+	return nil
 }
 
 func (f goFunction) ParamTypes() []api.ValueType {
