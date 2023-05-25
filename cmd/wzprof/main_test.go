@@ -108,7 +108,7 @@ func TestGoTwoCalls(t *testing.T) {
 				{"runtime.mallocgc", 948, false},  // runtime.mallocgc
 				{"runtime.makeslice", 103, false}, // runtime.makeslice
 				{"main.myalloc1", 5, false},       // main.myalloc1
-				{"main.main", 18, false},          // main.main
+				{"main.main", 18, true},           // main.main
 				{"main.main", 25, false},          // main.main
 				{"runtime.main", 267, false},      // runtime.main
 				{"runtime.goexit", 401, false},    // runtime.goexit

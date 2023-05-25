@@ -388,19 +388,17 @@ func (u *unwinder) next() {
 // Specifically, this is the PC of the last instruction executed in this frame.
 //
 // If this frame did a normal call, then frame.pc is a return PC, so this will
-// return frame.pc-1, which points into the CALL instruction. If the frame was
-// interrupted by a signal (e.g., profiler, segv, etc) then frame.pc is for the
-// trapped instruction, so this returns frame.pc. See issue #34123. Finally,
-// frame.pc can be at function entry when the frame is initialized without
-// actually running code, like in runtime.mstart, in which case this returns
-// frame.pc because that's the best we can do.
-func (u *unwinder) symPC() ptr {
-	if u.flags&unwindTrap == 0 && u.frame.pc > ptr(u.frame.fn.Entry) {
+// return frame.pc-1, which points into the CALL instruction. Finally, frame.pc
+// can be at function entry when the frame is initialized without actually
+// running code, like in runtime.mstart, in which case this returns frame.pc
+// because that's the best we can do.
+func symPC(fn *gosym.FuncInfo, pc ptr) ptr {
+	if pc > ptr(fn.Entry) {
 		// Regular call.
-		return u.frame.pc - 1
+		return pc - 1
 	}
-	// Trapping instruction or we're at the function entry point.
-	return u.frame.pc
+	// We're at the function entry point.
+	return pc
 }
 
 // finishInternal is an unwinder-internal helper called after the stack has been
@@ -422,11 +420,6 @@ func pcvalue(pctab []byte, f *gosym.FuncInfo, off uint32, targetpc ptr, strict b
 
 	if !f.Valid() {
 		panic("no module data")
-		// if strict && panicking.Load() == 0 {
-		// 	println("runtime: no module data for", hex(f.entry()))
-		// 	throw("no module data")
-		// }
-		// return -1, 0
 	}
 	p := pctab[off:]
 	pc := ptr(f.Entry)

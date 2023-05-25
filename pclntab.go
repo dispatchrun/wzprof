@@ -483,18 +483,45 @@ type pclntabmapper struct {
 	moduledata moduledata
 }
 
-func (p *pclntabmapper) Locations(_ experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
-	file, line, fn := p.t.PCToLine(uint64(pc))
-	if fn == nil {
-		return uint64(pc), nil
+func (p *pclntabmapper) Locations(gofunc experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
+	// use the inline unwinder to retrieve all the location for this PC.
+
+	// Assumption that pclntabmapper is only used in conjuction with
+	// goStackIterator.
+	f := gofunc.(goFunction)
+
+	locs := []location{}
+
+	var calleeFuncID gosym.FuncID
+
+	iu, uf := newInlineUnwinder(p, f.mem, f.info, symPC(f.info, ptr(pc)))
+	for ; uf.valid(); uf = iu.next(uf) {
+		sf := iu.srcFunc(uf)
+		if sf.FuncID == gosym.FuncIDWrapper && elideWrapperCalling(calleeFuncID) {
+			// skip wrappers like stdlib
+			continue
+		}
+		ipc := uf.pc
+		calleeFuncID = sf.FuncID
+
+		file, line, fn := p.t.PCToLine(uint64(ipc))
+		if fn == nil {
+			continue
+		}
+		locs = append(locs, location{
+			File:       file,
+			Line:       int64(line),
+			StableName: fn.Name,
+			HumanName:  fn.Name,
+		})
 	}
 
-	return uint64(pc), []location{{
-		File:       file,
-		Line:       int64(line),
-		StableName: fn.Name,
-		HumanName:  fn.Name,
-	}}
+	// reverse locations to follow dwarf's convention
+	for i, j := 0, len(locs)-1; i < j; i, j = i+1, j-1 {
+		locs[i], locs[j] = locs[j], locs[i]
+	}
+
+	return uint64(pc), locs
 }
 
 // https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
@@ -627,12 +654,13 @@ func (r rtmem) gSchedLr(g gptr) ptr {
 	return ptr(r.readU64(ptr(g) + 8*12))
 }
 
+// goStackIterator iterates over the physical frames of the Go stack. It is up
+// to the symbolizer (pclntabmapper) to expand those into logical frames to
+// account for inlining.
 type goStackIterator struct {
 	first bool
 	rt    *Runtime
 	pc    ptr
-	uf    inlineFrame
-	iu    inlineUnwinder
 	unwinder
 }
 
@@ -642,26 +670,16 @@ func (s *goStackIterator) Next() bool {
 	}
 
 	if s.first {
-		s.iu, s.uf = newInlineUnwinder(s.symbols, s.mem, s.frame.fn, s.symPC())
 		s.first = false
-	} else {
-		s.uf = s.iu.next(s.uf)
-		if !s.uf.valid() {
-			s.next()
-			if !s.valid() {
-				return false
-			}
-			s.iu, s.uf = newInlineUnwinder(s.symbols, s.mem, s.frame.fn, s.symPC())
-		}
+		s.pc = s.frame.pc
+		return true
 	}
 
-	sf := s.iu.srcFunc(s.uf)
-	if sf.FuncID == gosym.FuncIDWrapper && elideWrapperCalling(s.calleeFuncID) {
-		// skip wrappers like stdlib
-	} else {
-		s.pc = s.uf.pc
+	s.next()
+	if !s.valid() {
+		return false
 	}
-	s.calleeFuncID = sf.FuncID
+	s.pc = s.frame.pc
 	return true
 }
 
@@ -670,7 +688,12 @@ func (s *goStackIterator) ProgramCounter() experimental.ProgramCounter {
 }
 
 func (s *goStackIterator) Function() experimental.InternalFunction {
-	return goFunction{sym: s.symbols, pc: s.frame.pc}
+	return goFunction{
+		mem:  s.mem,
+		sym:  s.symbols,
+		info: s.frame.fn,
+		pc:   s.frame.pc,
+	}
 }
 
 func (s *goStackIterator) Parameters() []uint64 {
@@ -692,8 +715,10 @@ func elideWrapperCalling(id gosym.FuncID) bool {
 // InternalFunction, as the goStackIterator cannot map to an internal *function
 // in wazero.
 type goFunction struct {
-	sym *pclntabmapper
-	pc  ptr
+	mem  rtmem
+	sym  *pclntabmapper
+	info *gosym.FuncInfo
+	pc   ptr
 
 	api.FunctionDefinition // required for WazeroOnly
 }
