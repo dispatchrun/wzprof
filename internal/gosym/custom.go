@@ -134,6 +134,10 @@ type FuncInfo struct {
 	Data  []byte
 	Entry uint64
 	End   uint64
+
+	// TODO: for debug, remove me
+	Name string
+	Idx  int
 }
 
 func (f *FuncInfo) Valid() bool {
@@ -181,6 +185,9 @@ func (t *LineTable) RuntimeInfo() RuntimeInfo {
 			Data:  data,
 			Entry: ft.pc(i),
 			End:   ft.pc(i + 1),
+
+			Name: ft.funcName(uint32(_f.NameOff)),
+			Idx:  i,
 		}
 	}
 	return RuntimeInfo{funcs: funcs, Pctab: t.pctab}
