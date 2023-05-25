@@ -87,7 +87,7 @@ type stkframe struct {
 	sp   ptr // stack pointer at pc
 	fp   ptr // stack pointer at caller aka frame pointer
 	varp ptr // top of local variables
-	argp ptr // pointer to function arguments
+	// argp ptr // pointer to function arguments
 }
 
 // unwindFlags control the behavior of various unwinders.
@@ -533,9 +533,9 @@ func (u *inlineUnwinder) srcFunc(uf inlineFrame) gosym.SrcFunc {
 	// t := &u.inlTree[uf.index]
 	return gosym.SrcFunc{
 		// u.f.datap,
-		t.nameOff,
-		t.startLine,
-		t.funcID,
+		NameOff:   t.nameOff,
+		StartLine: t.startLine,
+		FuncID:    t.funcID,
 	}
 }
 
@@ -584,7 +584,7 @@ func newInlineUnwinder(symbols *pclntabmapper, mem rtmem, f *gosym.FuncInfo, pc 
 // funcdata returns a pointer to the ith funcdata for f.
 // funcdata should be kept in sync with cmd/link:writeFuncs.
 func funcdata(symbols *pclntabmapper, f *gosym.FuncInfo, i uint8) ptr {
-	if i < 0 || i >= f.Nfuncdata {
+	if i >= f.Nfuncdata {
 		return 0
 	}
 	base := symbols.moduledata.gofunc

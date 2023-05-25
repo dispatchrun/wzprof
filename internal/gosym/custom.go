@@ -47,7 +47,7 @@ type FuncID uint8
 // https://github.com/golang/go/blob/b950cc8f11dc31cc9f6cfbed883818a7aa3abe94/src/internal/abi/symtab.go#L8
 const (
 	// If you add a FuncID, you probably also want to add an entry to the map in
-	// ../../cmd/internal/objabi/funcid.go
+	// ../../cmd/internal/objabi/funcid.go.
 
 	FuncIDNormal FuncID = iota // not a special function
 	FuncID_abort
@@ -162,7 +162,7 @@ type SrcFunc struct {
 }
 
 // Returns the offset in moduledata.pctab for the i-th pcdata table of f.
-// (also known as pcdatastart in runtime/symtab.go)
+// (also known as pcdatastart in runtime/symtab.go).
 func (f *FuncInfo) PcdataOffset(table uint32) uint32 {
 	o := uint64(unsafe.Sizeof(_Func{})) + uint64(table)*4
 	return binary.LittleEndian.Uint32(f.Data[o:])

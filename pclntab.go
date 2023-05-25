@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/stealthrocket/wzprof/internal/gosym"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
+
+	"github.com/stealthrocket/wzprof/internal/gosym"
 )
 
 func compiledByGo(mod wazero.CompiledModule) bool {
@@ -260,19 +261,15 @@ func pclntabFromData(data section) (partialPCHeader, []byte) {
 
 	readWord := func(word int) uint64 {
 		for {
-			x, err := vm.PclntabOffset(word)
-			if err == nil {
+			x, ok := vm.PclntabOffset(word)
+			if ok {
 				return x
 			}
-			if err == fault {
-				vaddr, seg := d.Next()
-				if seg == nil {
-					panic("no more segment")
-				}
-				vm.CopyAtAddress(vaddr, seg)
-			} else {
-				panic("unhandled error")
+			vaddr, seg := d.Next()
+			if seg == nil {
+				panic("no more segment")
 			}
+			vm.CopyAtAddress(vaddr, seg)
 		}
 	}
 
@@ -367,7 +364,7 @@ func moduledataFromData(pch partialPCHeader, data section) (moduledata, error) {
 	return md, nil
 }
 
-// returns -1 if not found
+// returns -1 if not found.
 func findStartOfModuleData(b, start, cutabaddr, filetabaddr []byte) int {
 	// offset 0: pch.addr
 	// offset 8: funcnametab address
@@ -408,20 +405,18 @@ type vmem struct {
 	b []byte
 }
 
-var fault = fmt.Errorf("segment fault")
-
 func (m *vmem) Has(addr int) bool {
 	return addr < len(m.b)
 }
 
-func (m *vmem) PclntabOffset(word int) (uint64, error) {
+func (m *vmem) PclntabOffset(word int) (uint64, bool) {
 	s := 8 + word*m.Ptrsize
 	e := s + 8
 	if !m.Has(e) {
-		return 0, fault
+		return 0, false
 	}
 	res := binary.LittleEndian.Uint64(m.b[s:])
-	return res, nil
+	return res, true
 }
 
 func (m *vmem) CopyAtAddress(addr int64, b []byte) {
@@ -449,10 +444,6 @@ func (m *vmem) CopyAtAddress(addr int64, b []byte) {
 // fid is the ID of a function, that is its number in the function section of
 // the module, which includes imports. In a given module, fid = fidx+imports.
 type fid int
-
-// fidx is the index of a function in the Code section of the module, which
-// excludes imports. In a given module, fidx = fid-imports.
-type fidx int
 
 func buildPclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntabmapper, error) {
 	data := wasmdataSection(wasmbin)
