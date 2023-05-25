@@ -22,19 +22,8 @@ func compiledByGo(mod wazero.CompiledModule) bool {
 	return false
 }
 
-type section struct {
-	// Offset since start of binary of the first byte of the section (after the
-	// section size).
-	Offset uint64
-	Data   []byte
-}
-
-func (s section) Valid() bool {
-	return s.Data != nil
-}
-
-// wasmbin parses a WASM binary and returns the bytes of the WASM "Code" and
-// "Data" sections. Returns nils if the sections do not exist.
+// wasmdataSection parses a WASM binary and returns the bytes of the WASM "Data"
+// section. Returns nil if the sections do not exist.
 //
 // It is a very weak parser: it should be called on a valid module, or it may
 // panic.
@@ -42,28 +31,22 @@ func (s section) Valid() bool {
 // This function exists because Wazero doesn't expose the Code and Data sections
 // on its CompiledModule and they are needed to retrieve pclntab on Go-compiled
 // modules.
-func wasmdataSection(b []byte) section {
+func wasmdataSection(b []byte) []byte {
 	const dataSectionId = 11
 
-	offset := uint64(0)
-
 	b = b[8:] // skip magic+version
-	offset += 8
 	for len(b) > 2 {
 		id := b[0]
 		b = b[1:]
-		offset++
 		length, n := binary.Uvarint(b)
 		b = b[n:]
-		offset += uint64(n)
 
 		if id == dataSectionId {
-			return section{offset, b[:length]}
+			return b[:length]
 		}
 		b = b[length:]
-		offset += length
 	}
-	return section{}
+	return nil
 }
 
 // dataIterator iterates over the segments contained in a wasm Data section.
@@ -220,8 +203,7 @@ type partialPCHeader struct {
 // whether pclntab contains actual useful data.
 //
 // See layout in the linker: https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L169-L185
-func pclntabFromData(data section) (partialPCHeader, []byte) {
-	b := data.Data
+func pclntabFromData(b []byte) (partialPCHeader, []byte) {
 	// magic number of the start of pclntab for Go 1.20, little endian.
 	magic := []byte{0xf1, 0xff, 0xff, 0xff, 0x00, 0x00}
 	pclntabOffset := bytes.Index(b, magic)
@@ -324,7 +306,7 @@ func pclntabFromData(data section) (partialPCHeader, []byte) {
 //
 // We know all those addresses are in the same data segment, but the whole
 // moduledata may not be.
-func moduledataFromData(pch partialPCHeader, data section) (moduledata, error) {
+func moduledataFromData(pch partialPCHeader, b []byte) (moduledata, error) {
 	start := make([]byte, 16) // pchaddr and funcnametabaddr are one after the other.
 	binary.LittleEndian.PutUint64(start[:8], pch.address)
 	binary.LittleEndian.PutUint64(start[8:], pch.address+pch.funcnametabOff)
@@ -333,7 +315,6 @@ func moduledataFromData(pch partialPCHeader, data section) (moduledata, error) {
 	filetabaddr := make([]byte, 8)
 	binary.LittleEndian.PutUint64(filetabaddr, pch.address+pch.filetabOff)
 
-	b := data.Data
 	offset := findStartOfModuleData(b, start, cutabaddr, filetabaddr)
 
 	if offset == -1 {
@@ -447,6 +428,9 @@ type fid int
 
 func buildPclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntabmapper, error) {
 	data := wasmdataSection(wasmbin)
+	if data == nil {
+		return nil, fmt.Errorf("no data section in the wasm binary")
+	}
 	pch, pclntab := pclntabFromData(data)
 	md, err := moduledataFromData(pch, data)
 	if err != nil {
