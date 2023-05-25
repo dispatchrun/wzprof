@@ -318,7 +318,7 @@ func pclntabFromData(data section) (partialPCHeader, []byte) {
 	return pch, vm.b
 }
 
-// moduledataFromData searches the data sectement to find and reconstruct the
+// moduledataFromData searches the data segments to find and reconstruct the
 // firstmoduledata struct embedded in the module.
 //
 // It is tricky because there is no marker to tell us where it starts. So
@@ -327,8 +327,7 @@ func pclntabFromData(data section) (partialPCHeader, []byte) {
 //
 // We know all those addresses are in the same data segment, but the whole
 // moduledata may not be.
-func moduledataFromData(pch partialPCHeader, data section) []byte {
-
+func moduledataFromData(pch partialPCHeader, data section) (moduledata, error) {
 	start := make([]byte, 16) // pchaddr and funcnametabaddr are one after the other.
 	binary.LittleEndian.PutUint64(start[:8], pch.address)
 	binary.LittleEndian.PutUint64(start[8:], pch.address+pch.funcnametabOff)
@@ -341,8 +340,7 @@ func moduledataFromData(pch partialPCHeader, data section) []byte {
 	offset := findStartOfModuleData(b, start, cutabaddr, filetabaddr)
 
 	if offset == -1 {
-		fmt.Println("Warning: could not find moduledata bytes in data segments")
-		return nil
+		return moduledata{}, fmt.Errorf("could not find moduledata bytes in data segments")
 	}
 
 	d := newDataIterator(b)
@@ -362,7 +360,12 @@ func moduledataFromData(pch partialPCHeader, data section) []byte {
 		vm.CopyAtAddress(vaddr, seg)
 	}
 
-	return vm.b
+	b = vm.b
+	md := moduledata{}
+	// TODO: parse other fields?
+	md.gofunc = ptr(binary.LittleEndian.Uint64(b[320:]))
+
+	return md, nil
 }
 
 // returns -1 if not found
@@ -452,33 +455,33 @@ type fid int
 // excludes imports. In a given module, fidx = fid-imports.
 type fidx int
 
-func gosymTableFromModule(wasmbin []byte) (*gosym.Table, *gosym.LineTable, error) {
+func buildPclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntabmapper, error) {
 	data := wasmdataSection(wasmbin)
 	pch, pclntab := pclntabFromData(data)
-	moduledataFromData(pch, data)
+	md, err := moduledataFromData(pch, data)
+	if err != nil {
+		return nil, err
+	}
 	lt := gosym.NewLineTable(pclntab, 0)
 	t, err := gosym.NewTable(nil, lt)
-	return t, lt, err
-}
-
-func buildPclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntabmapper, error) {
-	t, lt, err := gosymTableFromModule(wasmbin)
 	if err != nil {
 		return nil, err
 	}
 	return &pclntabmapper{
-		t:        t,
-		info:     lt.RuntimeInfo(),
-		imported: uint64(len(mod.ImportedFunctions())),
-		modName:  mod.Name(),
+		t:          t,
+		info:       lt.RuntimeInfo(),
+		imported:   uint64(len(mod.ImportedFunctions())),
+		modName:    mod.Name(),
+		moduledata: md,
 	}, nil
 }
 
 type pclntabmapper struct {
-	t        *gosym.Table
-	info     gosym.RuntimeInfo
-	imported uint64
-	modName  string
+	t          *gosym.Table
+	info       gosym.RuntimeInfo
+	imported   uint64
+	modName    string
+	moduledata moduledata
 }
 
 func (p *pclntabmapper) Locations(_ experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
@@ -551,6 +554,18 @@ func (r rtmem) derefPtr(p ptr) ptr {
 	return ptr(r.readU64(p))
 }
 
+// Reads the index-th element of a slice that starts at address p.
+func readSliceIndex[T any](r rtmem, p ptr, index int32) T {
+	var t T
+	s := uint32(unsafe.Sizeof(t))
+	b, ok := r.Read(uint32(p)+uint32(index)*s, s)
+	if !ok {
+		panic("invalid slice index read")
+	}
+	t = *(*T)(unsafe.Pointer((unsafe.SliceData(b))))
+	return t
+}
+
 // Layout of g struct:
 //
 // size, index, field
@@ -615,31 +630,44 @@ func (r rtmem) gSchedLr(g gptr) ptr {
 
 type goStackIterator struct {
 	first bool
-	top   bool
 	rt    *Runtime
+	pc    ptr
+	uf    inlineFrame
+	iu    inlineUnwinder
 	unwinder
 }
 
 func (s *goStackIterator) Next() bool {
-	if s.first {
-		s.first = false
-		return true
-	} else {
-		s.top = false
-	}
 	if !s.valid() {
 		return false
 	}
-	s.next()
-	return s.valid()
+
+	if s.first {
+		s.iu, s.uf = newInlineUnwinder(s.symbols, s.mem, s.frame.fn, s.symPC())
+		s.first = false
+	} else {
+		s.uf = s.iu.next(s.uf)
+		if !s.uf.valid() {
+			s.next()
+			if !s.valid() {
+				return false
+			}
+			s.iu, s.uf = newInlineUnwinder(s.symbols, s.mem, s.frame.fn, s.symPC())
+		}
+	}
+
+	sf := s.iu.srcFunc(s.uf)
+	if sf.FuncID == gosym.FuncIDWrapper && elideWrapperCalling(s.calleeFuncID) {
+		// skip wrappers like stdlib
+	} else {
+		s.pc = s.uf.pc
+	}
+	s.calleeFuncID = sf.FuncID
+	return true
 }
 
 func (s *goStackIterator) ProgramCounter() experimental.ProgramCounter {
-	pc := s.frame.pc
-	if !s.top {
-		pc--
-	}
-	return experimental.ProgramCounter(pc)
+	return experimental.ProgramCounter(s.pc)
 }
 
 func (s *goStackIterator) Function() experimental.InternalFunction {
@@ -652,6 +680,14 @@ func (s *goStackIterator) Parameters() []uint64 {
 }
 
 var _ experimental.StackIterator = (*goStackIterator)(nil)
+
+// elideWrapperCalling reports whether a wrapper function that called
+// function id should be elided from stack traces.
+func elideWrapperCalling(id gosym.FuncID) bool {
+	// If the wrapper called a panic function instead of the
+	// wrapped function, we want to include it in stacks.
+	return !(id == gosym.FuncID_gopanic || id == gosym.FuncID_sigpanic || id == gosym.FuncID_panicwrap)
+}
 
 // goFunction is a lazy implementation of wazero's FunctionDefinition and
 // InternalFunction, as the goStackIterator cannot map to an internal *function
@@ -721,30 +757,25 @@ type functab struct {
 }
 
 type moduledata struct {
-	//	sys.NotInHeap // Only in static data
-
-	pcHeader    ptr       // 0
-	funcnametab []byte    // 8
-	cutab       []uint32  // 32
-	filetab     []byte    // 56
-	pctab       []byte    // 80
-	pclntable   []byte    // 104
-	ftab        []functab // 128
-	findfunctab ptr       // 152
-
-	minpc ptr
-	maxpc ptr
-
-	text, etext           ptr
-	noptrdata, enoptrdata ptr
-	data, edata           ptr
-	bss, ebss             ptr
-	noptrbss, enoptrbss   ptr
-	covctrs, ecovctrs     ptr
-	end, gcdata, gcbss    ptr
-	types, etypes         ptr
-	rodata                ptr
-	gofunc                ptr // go.func.*
+	pcHeader              ptr       // 0
+	funcnametab           []byte    // 8
+	cutab                 []uint32  // 32
+	filetab               []byte    // 56
+	pctab                 []byte    // 80
+	pclntable             []byte    // 104
+	ftab                  []functab // 128
+	findfunctab           ptr       // 152
+	minpc, maxpc          ptr       // 160
+	text, etext           ptr       // 176
+	noptrdata, enoptrdata ptr       // 192
+	data, edata           ptr       // 208
+	bss, ebss             ptr       // 224
+	noptrbss, enoptrbss   ptr       // 240
+	covctrs, ecovctrs     ptr       // 256
+	end, gcdata, gcbss    ptr       // 272
+	types, etypes         ptr       // 296
+	rodata                ptr       // 312
+	gofunc                ptr       // 320 go.func.*
 	//
 	//textsectmap []textsect
 	//typelinks   []int32 // offsets from types

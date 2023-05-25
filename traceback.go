@@ -390,6 +390,25 @@ func (u *unwinder) next() {
 	u.resolveInternal(false)
 }
 
+// symPC returns the PC that should be used for symbolizing the current frame.
+// Specifically, this is the PC of the last instruction executed in this frame.
+//
+// If this frame did a normal call, then frame.pc is a return PC, so this will
+// return frame.pc-1, which points into the CALL instruction. If the frame was
+// interrupted by a signal (e.g., profiler, segv, etc) then frame.pc is for the
+// trapped instruction, so this returns frame.pc. See issue #34123. Finally,
+// frame.pc can be at function entry when the frame is initialized without
+// actually running code, like in runtime.mstart, in which case this returns
+// frame.pc because that's the best we can do.
+func (u *unwinder) symPC() ptr {
+	if u.flags&unwindTrap == 0 && u.frame.pc > ptr(u.frame.fn.Entry) {
+		// Regular call.
+		return u.frame.pc - 1
+	}
+	// Trapping instruction or we're at the function entry point.
+	return u.frame.pc
+}
+
 // finishInternal is an unwinder-internal helper called after the stack has been
 // exhausted. It sets the unwinder to an invalid state.
 func (u *unwinder) finishInternal() {
@@ -490,4 +509,108 @@ func readvarint(p []byte) (read uint32, val uint32) {
 		shift += 7
 	}
 	return n, v
+}
+
+// inlinedCall is the encoding of entries in the FUNCDATA_InlTree table.
+type inlinedCall struct {
+	funcID    gosym.FuncID // type of the called function
+	_         [3]byte
+	nameOff   int32 // offset into pclntab for name of called function
+	parentPc  int32 // position of an instruction whose source position is the call site (offset from entry)
+	startLine int32 // line number of start of function (func keyword/TEXT directive)
+}
+
+type inlineUnwinder struct {
+	symbols *pclntabmapper
+	mem     rtmem
+	f       *gosym.FuncInfo
+	inlTree ptr // Address of the array of inlinedCall entries
+}
+
+// next returns the frame representing uf's logical caller.
+func (u *inlineUnwinder) next(uf inlineFrame) inlineFrame {
+	if uf.index < 0 {
+		uf.pc = 0
+		return uf
+	}
+	c := readSliceIndex[inlinedCall](u.mem, u.inlTree, uf.index)
+	return u.resolveInternal(ptr(u.f.Entry) + ptr(c.parentPc))
+}
+
+// srcFunc returns the srcFunc representing the given frame.
+func (u *inlineUnwinder) srcFunc(uf inlineFrame) gosym.SrcFunc {
+	if uf.index < 0 {
+		return u.f.SrcFunc()
+	}
+	t := readSliceIndex[inlinedCall](u.mem, u.inlTree, uf.index)
+	// t := &u.inlTree[uf.index]
+	return gosym.SrcFunc{
+		// u.f.datap,
+		t.nameOff,
+		t.startLine,
+		t.funcID,
+	}
+}
+
+func (u *inlineUnwinder) resolveInternal(pc ptr) inlineFrame {
+	return inlineFrame{
+		pc: pc,
+		// Conveniently, this returns -1 if there's an error, which is the same
+		// value we use for the outermost frame.
+		index: pcdatavalue1(u.symbols.info.Pctab, u.f, gosym.PCDATA_InlTreeIndex, pc, false),
+	}
+}
+
+func pcdatavalue1(pctab []byte, f *gosym.FuncInfo, table uint32, targetpc ptr, strict bool) int32 {
+	if table >= f.Npcdata {
+		return -1
+	}
+	r, _ := pcvalue(pctab, f, f.PcdataOffset(table), targetpc, strict)
+	return r
+}
+
+// An inlineFrame is a position in an inlineUnwinder.
+type inlineFrame struct {
+	// pc is the PC giving the file/line metadata of the current frame. This is
+	// always a "call PC" (not a "return PC"). This is 0 when the iterator is
+	// exhausted.
+	pc ptr
+
+	// index is the index of the current record in inlTree, or -1 if we are in
+	// the outermost function.
+	index int32
+}
+
+func (uf inlineFrame) valid() bool {
+	return uf.pc != 0
+}
+
+func newInlineUnwinder(symbols *pclntabmapper, mem rtmem, f *gosym.FuncInfo, pc ptr) (inlineUnwinder, inlineFrame) {
+	inldataAddr := funcdata(symbols, f, gosym.FUNCDATA_InlTree)
+	if inldataAddr == 0 {
+		return inlineUnwinder{symbols: symbols, mem: mem, f: f}, inlineFrame{pc: pc, index: -1}
+	}
+	u := inlineUnwinder{symbols: symbols, mem: mem, f: f, inlTree: inldataAddr}
+	return u, u.resolveInternal(pc)
+}
+
+// funcdata returns a pointer to the ith funcdata for f.
+// funcdata should be kept in sync with cmd/link:writeFuncs.
+func funcdata(symbols *pclntabmapper, f *gosym.FuncInfo, i uint8) ptr {
+	if i < 0 || i >= f.Nfuncdata {
+		return 0
+	}
+	base := symbols.moduledata.gofunc
+	// base := f.datap.gofunc // load gofunc address early so that we calculate during cache misses
+	off := f.FuncDataOffset(i)
+
+	// Return off == ^uint32(0) ? 0 : f.datap.gofunc + uintptr(off), but without branches.
+	// The compiler calculates mask on most architectures using conditional assignment.
+	var mask ptr
+	if off == ^uint32(0) {
+		mask = 1
+	}
+	mask--
+	raw := base + ptr(off)
+	return raw & mask
 }
