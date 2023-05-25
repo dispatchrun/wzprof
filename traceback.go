@@ -186,7 +186,8 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 
 	f := u.symbols.info.FindFunc(uint64(frame.pc))
 	if !f.Valid() {
-		panic("could not find func fo pc")
+		u.finishInternal()
+		return
 	}
 	frame.fn = f
 
@@ -353,13 +354,6 @@ func (u *unwinder) next() {
 	}
 	flr := u.symbols.info.FindFunc(uint64(frame.lr))
 	if !flr.Valid() {
-		// This happens if you get a profiling interrupt at just the wrong time.
-		// In that context it is okay to stop early.
-		// But if no error flags are set, we're doing a garbage collection and must
-		// get everything, so crash loudly.
-		if u.flags&(unwindPrintErrors|unwindSilentErrors) == 0 {
-			panic("unknown caller pc")
-		}
 		frame.lr = 0
 		u.finishInternal()
 		return
