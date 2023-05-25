@@ -345,7 +345,6 @@ func moduledataFromData(pch partialPCHeader, data section) (moduledata, error) {
 
 	d := newDataIterator(b)
 	vaddr, seg := d.SkipToDataOffset(offset)
-	fmt.Println(vaddr, len(seg))
 	vm := vmem{Start: vaddr}
 	vm.CopyAtAddress(vaddr, seg)
 
