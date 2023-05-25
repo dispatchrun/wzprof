@@ -97,7 +97,7 @@ type RuntimeInfo struct {
 func (r RuntimeInfo) FindFunc(pc uint64) *FuncInfo {
 	start := 0
 	end := len(r.funcs)
-	for start <= end {
+	for start < end {
 		m := (end-start)/2 + start
 		switch {
 		case pc < r.funcs[m].Entry:
