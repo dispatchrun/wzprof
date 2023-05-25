@@ -89,6 +89,45 @@ func TestDataRustSimple(t *testing.T) {
 	})
 }
 
+func TestGoTwoCalls(t *testing.T) {
+	testMemoryProfiler(t, "../../testdata/go/twocalls.wasm", []sample{
+		{ // first call to myalloc1() from main.
+			[]int64{1, 41},
+			[]frame{
+				{"runtime.mallocgc", 948, false},  // runtime.mallocgc
+				{"runtime.makeslice", 103, false}, // runtime.makeslice
+				{"main.myalloc1", 5, false},       // main.myalloc1
+				{"main.main", 23, false},          // main.main
+				{"runtime.main", 267, false},      // runtime.main
+				{"runtime.goexit", 401, false},    // runtime.goexit
+			},
+		},
+		{ // call to myalloc1() through intermediate() that is inlined in main
+			[]int64{1, 50},
+			[]frame{
+				{"runtime.mallocgc", 948, false},  // runtime.mallocgc
+				{"runtime.makeslice", 103, false}, // runtime.makeslice
+				{"main.myalloc1", 5, false},       // main.myalloc1
+				{"main.main", 18, false},          // main.main
+				{"main.main", 25, false},          // main.main
+				{"runtime.main", 267, false},      // runtime.main
+				{"runtime.goexit", 401, false},    // runtime.goexit
+			},
+		},
+		{ // call to myalloc2()
+			[]int64{1, 100},
+			[]frame{
+				{"runtime.mallocgc", 948, false},  // runtime.mallocgc
+				{"runtime.makeslice", 103, false}, // runtime.makeslice
+				{"main.myalloc2", 13, false},      // main.myalloc2
+				{"main.main", 28, false},          // main.main
+				{"runtime.main", 267, false},      // runtime.main
+				{"runtime.goexit", 401, false},    // runtime.goexit
+			},
+		},
+	})
+}
+
 func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
 	prog := &program{
 		filePath:   path,
@@ -177,24 +216,21 @@ type sample struct {
 }
 
 /*
-
 // printSamples outputs the samples list in a way that can be copy-pasted in the
 // tests above.
-//
-// Pairs well with grep. Example to find the stack trace of allocate_even that
-// ends up allocating 120 bytes:
-//
-//	go test ./...|grep -C 15 allocate_even|grep -A 30 120
 func printSamples(samples []*profile.Sample) {
 	for i, s := range samples {
-		fmt.Println("Sample", i, "-------------", s.Value)
+		fmt.Println("{ // Sample", i, "-------------", s.Value)
+		fmt.Printf("\t%#v,\n", s.Value)
+		fmt.Println("\t[]frame{")
 		for _, loc := range s.Location {
 			for li, line := range loc.Line {
 				inline := li < len(loc.Line)-1
-				fmt.Printf("\t{\"%s\", %d, %t}, // %s\n", line.Function.Name, line.Line, inline, line.Function.SystemName)
+				fmt.Printf("\t\t{\"%s\", %d, %t}, // %s\n", line.Function.Name, line.Line, inline, line.Function.SystemName)
 			}
 		}
+		fmt.Println("\t},")
+		fmt.Println("},")
 	}
 }
-
 */
