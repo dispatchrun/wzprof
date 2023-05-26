@@ -8,6 +8,58 @@ import (
 	"github.com/tetratelabs/wazero/experimental"
 )
 
+// Flag returns a function listener factory which creates listeners where
+// calls to their Before/After methods are gated by the boolean flag pointed
+// at bythe first argument.
+//
+// The sampling mechanism is similar to the one implemented by Sample but it
+// gives the application control over when the listeners are enabled instead
+// of leaving the selection up to a probabilistic model.
+func Flag(flag *bool, factory experimental.FunctionListenerFactory) experimental.FunctionListenerFactory {
+	return experimental.FunctionListenerFactoryFunc(func(def api.FunctionDefinition) experimental.FunctionListener {
+		lstn := factory.NewFunctionListener(def)
+		if lstn == nil {
+			return nil
+		}
+		flagged := &flaggedFunctionListener{
+			flag: flag,
+			lstn: lstn,
+		}
+		flagged.stack.bits = flagged.bits[:]
+		return flagged
+	})
+}
+
+type flaggedFunctionListener struct {
+	flag  *bool
+	bits  [1]uint64
+	stack bitstack
+	lstn  experimental.FunctionListener
+}
+
+func (s *flaggedFunctionListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, stack experimental.StackIterator) {
+	bit := uint(0)
+
+	if *s.flag {
+		s.lstn.Before(ctx, mod, def, params, stack)
+		bit = 1
+	}
+
+	s.stack.push(bit)
+}
+
+func (s *flaggedFunctionListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
+	if s.stack.pop() != 0 {
+		s.lstn.After(ctx, mod, def, results)
+	}
+}
+
+func (s *flaggedFunctionListener) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error) {
+	if s.stack.pop() != 0 {
+		s.lstn.Abort(ctx, mod, def, err)
+	}
+}
+
 // Sample returns a function listener factory which creates listeners where
 // calls to their Before/After methods is sampled at the given sample rate.
 //
