@@ -49,9 +49,9 @@ func (p partialPCHeader) Valid() bool {
 // See layout in the linker:
 // https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/ld/pcln.go#L235-L248
 func pclntabHeaderFromData(b []byte) partialPCHeader {
-	// magic number of the start of pclntab for Go 1.20, little endian. Also
-	// add constants for the wasm arch to have less chances of finding
-	// something that is not the pclntab. Constants:
+	// magic number of the start of pclntab for Go 1.20, little endian. Also add
+	// constants for the wasm arch to have fewer chances of finding something
+	// that is not the pclntab. Constants:
 	// https://github.com/golang/go/blob/82d5ebce96761083f5313b180c6b368be1912d42/src/cmd/internal/sys/arch.go#L257-L268
 	needle := []byte{
 		0xf1, 0xff, 0xff, 0xff, 0x00, 0x00, // magic number
@@ -443,6 +443,23 @@ func (p *pclntab) Locations(gofunc experimental.InternalFunction, pc experimenta
 	return uint64(pc), locs
 }
 
+// symPC returns the PC that should be used for symbolizing the current frame.
+// Specifically, this is the PC of the last instruction executed in this frame.
+//
+// If this frame did a normal call, then frame.pc is a return PC, so this will
+// return frame.pc-1, which points into the CALL instruction. Finally, frame.pc
+// can be at function entry when the frame is initialized without actually
+// running code, like in runtime.mstart, in which case this returns frame.pc
+// because that's the best we can do.
+func symPC(fn funcInfo, pc ptr) ptr {
+	if pc > fn.entry() {
+		// Regular call.
+		return pc - 1
+	}
+	// We're at the function entry point.
+	return pc
+}
+
 // https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
 const funcValueOffset = 0x1000
 
@@ -756,20 +773,20 @@ func (md moduledata) textOff(pc ptr) (uint32, bool) {
 	return res, true
 }
 
-// textAddr returns md.text + off, with special handling for multiple text sections.
-// off is a (virtual) offset computed at internal linking time,
-// before the external linker adjusts the sections' base addresses.
+// textAddr returns md.text + off, with special handling for multiple text
+// sections. off is a (virtual) offset computed at internal linking time, before
+// the external linker adjusts the sections' base addresses.
 //
-// The text, or instruction stream is generated as one large buffer.
-// The off (offset) for a function is its offset within this buffer.
-// If the total text size gets too large, there can be issues on platforms like ppc64
-// if the target of calls are too far for the call instruction.
-// To resolve the large text issue, the text is split into multiple text sections
-// to allow the linker to generate long calls when necessary.
-// When this happens, the vaddr for each text section is set to its offset within the text.
-// Each function's offset is compared against the section vaddrs and ends to determine the containing section.
-// Then the section relative offset is added to the section's
-// relocated baseaddr to compute the function address.
+// The text, or instruction stream is generated as one large buffer. The off
+// (offset) for a function is its offset within this buffer. If the total text
+// size gets too large, there can be issues on platforms like ppc64 if the
+// target of calls are too far for the call instruction. To resolve the large
+// text issue, the text is split into multiple text sections to allow the linker
+// to generate long calls when necessary. When this happens, the vaddr for each
+// text section is set to its offset within the text. Each function's offset is
+// compared against the section vaddrs and ends to determine the containing
+// section. Then the section relative offset is added to the section's relocated
+// baseaddr to compute the function address.
 func (md moduledata) textAddr(off32 uint32) ptr {
 	off := ptr(off32)
 	res := md.text + off
@@ -785,7 +802,7 @@ func (md moduledata) textAddr(off32 uint32) ptr {
 	return res
 }
 
-// Fills the contents of module data from memory, including slices.
+// Retrieve module data from memory, including slices.
 func derefModuledata(mem vmem, addr ptr) moduledata {
 	m := deref[moduledata](mem, addr)
 	m.funcnametab = derefGoSlice(mem, m.funcnametab)

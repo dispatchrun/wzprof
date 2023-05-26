@@ -344,23 +344,6 @@ func (u *unwinder) next() {
 	u.resolveInternal(false)
 }
 
-// symPC returns the PC that should be used for symbolizing the current frame.
-// Specifically, this is the PC of the last instruction executed in this frame.
-//
-// If this frame did a normal call, then frame.pc is a return PC, so this will
-// return frame.pc-1, which points into the CALL instruction. Finally, frame.pc
-// can be at function entry when the frame is initialized without actually
-// running code, like in runtime.mstart, in which case this returns frame.pc
-// because that's the best we can do.
-func symPC(fn funcInfo, pc ptr) ptr {
-	if pc > fn.entry() {
-		// Regular call.
-		return pc - 1
-	}
-	// We're at the function entry point.
-	return pc
-}
-
 // finishInternal is an unwinder-internal helper called after the stack has been
 // exhausted. It sets the unwinder to an invalid state.
 func (u *unwinder) finishInternal() {
