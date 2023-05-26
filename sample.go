@@ -10,7 +10,7 @@ import (
 
 // Flag returns a function listener factory which creates listeners where
 // calls to their Before/After methods are gated by the boolean flag pointed
-// at bythe first argument.
+// at by the first argument.
 //
 // The sampling mechanism is similar to the one implemented by Sample but it
 // gives the application control over when the listeners are enabled instead
