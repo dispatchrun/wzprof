@@ -90,7 +90,46 @@ func TestDataRustSimple(t *testing.T) {
 }
 
 func TestGoTwoCalls(t *testing.T) {
-	testMemoryProfiler(t, "../../testdata/go/twocalls.wasm", []sample{
+	wasm := "../../testdata/go/twocalls.wasm"
+
+	testCpuProfiler(t, wasm, []sample{
+		{ // first call to myalloc1() from main.
+			[]int64{1},
+			[]frame{
+				{"runtime.mallocgc", 948, false},  // runtime.mallocgc
+				{"runtime.makeslice", 103, false}, // runtime.makeslice
+				{"main.myalloc1", 5, false},       // main.myalloc1
+				{"main.main", 23, false},          // main.main
+				{"runtime.main", 267, false},      // runtime.main
+				{"runtime.goexit", 401, false},    // runtime.goexit
+			},
+		},
+		{ // call to myalloc1() through intermediate() that is inlined in main
+			[]int64{1},
+			[]frame{
+				{"runtime.mallocgc", 948, false},  // runtime.mallocgc
+				{"runtime.makeslice", 103, false}, // runtime.makeslice
+				{"main.myalloc1", 5, false},       // main.myalloc1
+				{"main.main", 18, true},           // main.main
+				{"main.main", 25, false},          // main.main
+				{"runtime.main", 267, false},      // runtime.main
+				{"runtime.goexit", 401, false},    // runtime.goexit
+			},
+		},
+		{ // call to myalloc2()
+			[]int64{1},
+			[]frame{
+				{"runtime.mallocgc", 948, false},  // runtime.mallocgc
+				{"runtime.makeslice", 103, false}, // runtime.makeslice
+				{"main.myalloc2", 13, false},      // main.myalloc2
+				{"main.main", 28, false},          // main.main
+				{"runtime.main", 267, false},      // runtime.main
+				{"runtime.goexit", 401, false},    // runtime.goexit
+			},
+		},
+	})
+
+	testMemoryProfiler(t, wasm, []sample{
 		{ // first call to myalloc1() from main.
 			[]int64{1, 41},
 			[]frame{
@@ -128,6 +167,22 @@ func TestGoTwoCalls(t *testing.T) {
 	})
 }
 
+func testCpuProfiler(t *testing.T, path string, expectedSamples []sample) {
+	prog := &program{
+		filePath:   path,
+		sampleRate: 1,
+		cpuProfile: filepath.Join(t.TempDir(), "cpu.pprof"),
+	}
+
+	expectedTypes := []string{
+		"samples",
+		"cpu",
+	}
+
+	p := execForProfile(t, prog, prog.cpuProfile)
+	assertSamples(t, expectedTypes, expectedSamples, p)
+}
+
 func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
 	prog := &program{
 		filePath:   path,
@@ -135,12 +190,21 @@ func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
 		memProfile: filepath.Join(t.TempDir(), "mem.pprof"),
 	}
 
+	expectedTypes := []string{
+		"alloc_objects",
+		"alloc_space",
+	}
+
+	p := execForProfile(t, prog, prog.memProfile)
+	assertSamples(t, expectedTypes, expectedSamples, p)
+}
+
+func execForProfile(t *testing.T, prog *program, out string) *profile.Profile {
 	err := prog.run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	f, err := os.Open(prog.memProfile)
+	f, err := os.Open(out)
 	if err != nil {
 		t.Fatalf("can't open profile file %s: %s", prog.memProfile, err)
 	}
@@ -152,12 +216,10 @@ func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
 	if err := p.CheckValid(); err != nil {
 		t.Fatalf("invalid profile: %s", err)
 	}
+	return p
+}
 
-	expectedTypes := []string{
-		"alloc_objects",
-		"alloc_space",
-	}
-
+func assertSamples(t *testing.T, expectedTypes []string, expectedSamples []sample, p *profile.Profile) {
 	if len(p.SampleType) != len(expectedTypes) {
 		t.Errorf("expected %d sample types; got %d", len(expectedTypes), len(p.SampleType))
 	}

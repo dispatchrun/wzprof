@@ -373,6 +373,10 @@ func (p *pclntab) EnsureReady(mem vmem) {
 // TODO: support multiple go modules.
 // TODO: cache this, as it's on the hot path.
 func (p *pclntab) FindFunc(pc ptr) funcInfo {
+	if pc < p.md.minpc || pc >= p.md.maxpc {
+		return funcInfo{}
+	}
+
 	// https://github.com/golang/go/blob/f90b4cd6554f4f20280aa5229cf42650ed47221d/src/runtime/symtab.go#L514
 	const nsub = 16
 	const minfunc = 16                 // minimum function size
