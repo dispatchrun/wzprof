@@ -107,8 +107,9 @@ Wazero runtime within a Go program:
 ```go
 sampleRate := 1.0
 
-cpu := wzprof.NewCPUProfiler()
-mem := wzprof.NewMemoryProfiler()
+rt := wzprof.NewRuntime()
+cpu := wzprof.NewCPUProfiler(rt)
+mem := wzprof.NewMemoryProfiler(rt)
 
 ctx := context.WithValue(context.Background(),
 	experimental.FunctionListenerFactoryKey{},
@@ -126,9 +127,9 @@ if err != nil {
 	log.Fatal("compiling wasm module:", err)
 }
 
-symbols, err := wzprof.BuildDwarfSymbolizer(compiledModule)
+err = rt.PrepareModule(wasmCode, compiledModule)
 if err != nil {
-	log.Fatal("symbolizing wasm module:", err)
+	return fmt.Errorf("preparing wasm module: %w", err)
 }
 
 // The CPU profiler collects records of module execution between two time
