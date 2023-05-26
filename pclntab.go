@@ -270,17 +270,17 @@ func (f funcInfo) fileLine(pc ptr) (file string, line int) {
 	}
 	// Pass strict=false here, because anyone can call this function,
 	// and they might just be wrong about targetpc belonging to f.
-	file, line32 := funcline1(f, pc, false)
+	file, line32 := funcline1(f, pc)
 	return file, int(line32)
 }
 
-func funcline1(f funcInfo, targetpc ptr, strict bool) (file string, line int32) {
+func funcline1(f funcInfo, targetpc ptr) (file string, line int32) {
 	datap := f.md
 	if !f.valid() {
 		return "?", 0
 	}
-	fileno, _ := pcvalue(f, f.Pcfile, targetpc, strict)
-	line, _ = pcvalue(f, f.Pcln, targetpc, strict)
+	fileno, _ := pcvalue(f, f.Pcfile, targetpc)
+	line, _ = pcvalue(f, f.Pcln, targetpc)
 	if fileno == -1 || line == -1 || int(fileno) >= len(datap.filetab) {
 		// print("looking for ", hex(targetpc), " in ", funcname(f), " got file=", fileno, " line=", lineno, "\n")
 		return "?", 0
@@ -311,11 +311,11 @@ func funcfile(f funcInfo, fileno int32) string {
 // derefs.
 type pclntabOff uint32
 
-func pcdatavalue1(f funcInfo, table uint32, targetpc ptr, strict bool) int32 {
+func pcdatavalue1(f funcInfo, table uint32, targetpc ptr) int32 {
 	if table >= f.Npcdata {
 		return -1
 	}
-	r, _ := pcvalue(f, pcdatastart(f, table), targetpc, strict)
+	r, _ := pcvalue(f, pcdatastart(f, table), targetpc)
 	return r
 }
 

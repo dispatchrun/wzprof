@@ -368,12 +368,12 @@ func (u *unwinder) finishInternal() {
 }
 
 func funcspdelta(f funcInfo, targetpc ptr) int32 {
-	x, _ := pcvalue(f, f.Pcsp, targetpc, true)
+	x, _ := pcvalue(f, f.Pcsp, targetpc)
 	return x
 }
 
 // Returns the PCData value, and the PC where this value starts.
-func pcvalue(f funcInfo, off uint32, targetpc ptr, strict bool) (int32, ptr) {
+func pcvalue(f funcInfo, off uint32, targetpc ptr) (int32, ptr) {
 	if off == 0 {
 		return -1, 0
 	}
@@ -503,7 +503,7 @@ func (u *inlineUnwinder) resolveInternal(pc ptr) inlineFrame {
 		pc: pc,
 		// Conveniently, this returns -1 if there's an error, which is the same
 		// value we use for the outermost frame.
-		index: pcdatavalue1(u.f, goruntime.PCDATA_InlTreeIndex, pc, false),
+		index: pcdatavalue1(u.f, goruntime.PCDATA_InlTreeIndex, pc),
 	}
 }
 
