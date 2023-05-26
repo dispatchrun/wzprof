@@ -580,8 +580,7 @@ func (s *goStackIterator) Function() experimental.InternalFunction {
 }
 
 func (s *goStackIterator) Parameters() []uint64 {
-	// TODO
-	return nil
+	panic("implement me")
 }
 
 var _ experimental.StackIterator = (*goStackIterator)(nil)

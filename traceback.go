@@ -9,7 +9,7 @@ import (
 // and simplified for cases that don't concern GOARCH=wasm. uintptr has been
 // replaced to ptr, and architecture-dependent values replaced for wasm. It
 // still contains code to deal with race conditions because its was little work
-// to keep around, only involves an pointer nil check to execute, and may be
+// to keep around, only involves pointer nil checks to execute, and may be
 // useful if wazero adds more concurrency when wasm threads support lands. Cgo
 // has been eliminated.
 
@@ -70,23 +70,11 @@ type stkframe struct {
 	//   instruction in a function. Conventionally, we use pc-1
 	//   for symbolic information, unless pc == fn.entry(), in
 	//   which case we use pc.
-	pc ptr
-
-	// continpc is the PC where execution will continue in fn, or
-	// 0 if execution will not continue in this frame.
-	//
-	// This is usually the same as pc, unless this frame "called"
-	// sigpanic, in which case it's either the address of
-	// deferreturn or 0 if this frame will never execute again.
-	//
-	// This is the PC to use to look up GC liveness for this frame.
-	continpc ptr
-
+	pc   ptr
 	lr   ptr // program counter at caller aka link register
 	sp   ptr // stack pointer at pc
 	fp   ptr // stack pointer at caller aka frame pointer
 	varp ptr // top of local variables
-	// argp ptr // pointer to function arguments
 }
 
 // unwindFlags control the behavior of various unwinders.
@@ -313,33 +301,6 @@ func (u *unwinder) resolveInternal(innermost bool) {
 	frame.varp = frame.fp
 	// On [wasm], call instruction pushes return PC before entering new function.
 	frame.varp -= goarchPtrSize
-
-	// Determine frame's 'continuation PC', where it can continue.
-	// Normally this is the return address on the stack, but if sigpanic
-	// is immediately below this function on the stack, then the frame
-	// stopped executing due to a trap, and frame.pc is probably not
-	// a safe point for looking up liveness information. In this panicking case,
-	// the function either doesn't return at all (if it has no defers or if the
-	// defers do not recover) or it returns from one of the calls to
-	// deferproc a second time (if the corresponding deferred func recovers).
-	// In the latter case, use a deferreturn call site as the continuation pc.
-	frame.continpc = frame.pc
-	if u.calleeFuncID == goruntime.FuncID_sigpanic {
-		if frame.fn.Deferreturn != 0 {
-			frame.continpc = frame.fn.entry() + ptr(frame.fn.Deferreturn) + 1
-			// Note: this may perhaps keep return variables alive longer than
-			// strictly necessary, as we are using "function has a defer statement"
-			// as a proxy for "function actually deferred something". It seems
-			// to be a minor drawback. (We used to actually look through the
-			// gp._defer for a defer corresponding to this function, but that
-			// is hard to do with defer records on the stack during a stack copy.)
-			// Note: the +1 is to offset the -1 that
-			// stack.go:getStackMap does to back up a return
-			// address make sure the pc is in the CALL instruction.
-		} else {
-			frame.continpc = 0
-		}
-	}
 }
 
 func (u *unwinder) next() {
