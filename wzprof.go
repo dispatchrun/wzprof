@@ -40,14 +40,14 @@ func NewRuntime() *Runtime {
 func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 	switch {
 	case compiledByGo(mod):
-		s, err := buildPclntabSymbolizer(wasm, mod)
+		s, err := preparePclntabSymbolizer(wasm, mod)
 		if err != nil {
 			return err
 		}
 		r.symbols = s
 		r.stackIterator = &goStackIteratorMaker{
 			goStackIterator: goStackIterator{
-				rt:       r,
+				pclntab:  s,
 				unwinder: unwinder{symbols: s},
 			},
 		}
@@ -70,8 +70,8 @@ type goStackIteratorMaker struct {
 
 func (g *goStackIteratorMaker) Make(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
 	imod := mod.(experimental.InternalModule)
-	mem := imod.Memory()
-	g.mem = rtmem{mem}
+	g.mem = imod.Memory()
+	g.pclntab.EnsureReady(g.mem)
 	sp0 := uint32(imod.Global(0).Get())
 	gp0 := imod.Global(2).Get()
 	pc0 := g.symbols.FIDToPC(fid(def.Index()))

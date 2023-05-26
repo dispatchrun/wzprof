@@ -10,9 +10,10 @@ import (
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 
-	"github.com/stealthrocket/wzprof/internal/gosym"
+	"github.com/stealthrocket/wzprof/internal/goruntime"
 )
 
+// Try to detect if the module was compiled by golang/go (not by tinygo).
 func compiledByGo(mod wazero.CompiledModule) bool {
 	for _, s := range mod.CustomSections() {
 		if s.Name() == "go:buildid" {
@@ -22,172 +23,8 @@ func compiledByGo(mod wazero.CompiledModule) bool {
 	return false
 }
 
-// wasmdataSection parses a WASM binary and returns the bytes of the WASM "Data"
-// section. Returns nil if the sections do not exist.
-//
-// It is a very weak parser: it should be called on a valid module, or it may
-// panic.
-//
-// This function exists because Wazero doesn't expose the Code and Data sections
-// on its CompiledModule and they are needed to retrieve pclntab on Go-compiled
-// modules.
-func wasmdataSection(b []byte) []byte {
-	const dataSectionId = 11
-
-	b = b[8:] // skip magic+version
-	for len(b) > 2 {
-		id := b[0]
-		b = b[1:]
-		length, n := binary.Uvarint(b)
-		b = b[n:]
-
-		if id == dataSectionId {
-			return b[:length]
-		}
-		b = b[length:]
-	}
-	return nil
-}
-
-// dataIterator iterates over the segments contained in a wasm Data section.
-// Only support mode 0 (memory 0 + offset) segments.
-type dataIterator struct {
-	b []byte // remaining bytes in the Data section
-	n uint64 // number of segments
-
-	// offset of b in the Data section.
-	offset int
-}
-
-// newDataIterator prepares an iterator using the bytes of a well-formed data
-// section.
-func newDataIterator(b []byte) dataIterator {
-	segments, r := binary.Uvarint(b)
-	return dataIterator{
-		b:      b[r:],
-		n:      segments,
-		offset: r,
-	}
-}
-
-func (d *dataIterator) read(n int) (b []byte) {
-	b, d.b = d.b[:n], d.b[n:]
-	d.offset += n
-	return b
-}
-
-func (d *dataIterator) skip(n int) {
-	d.b = d.b[n:]
-	d.offset += n
-}
-
-func (d *dataIterator) byte() byte {
-	b := d.b[0]
-	d.skip(1)
-	return b
-}
-
-func (d *dataIterator) varint() int64 {
-	x, n := sleb128(64, d.b)
-	d.skip(n)
-	return x
-}
-
-func sleb128(size int, b []byte) (result int64, read int) {
-	// The difference between sleb128 and protobuf's binary.Varint is that
-	// the latter puts the sign at the least significant bit.
-	shift := 0
-
-	var byte byte
-	for {
-		byte = b[0]
-		read++
-		b = b[1:]
-
-		result |= (int64(0b01111111&byte) << shift)
-		shift += 7
-		if 0b10000000&byte == 0 {
-			break
-		}
-	}
-	if (shift < size) && (0x40&byte > 0) {
-		result |= (^0 << shift)
-	}
-	return result, read
-}
-
-func (d *dataIterator) uvarint() uint64 {
-	x, n := binary.Uvarint(d.b)
-	d.skip(n)
-	return x
-}
-
-// Next returns the bytes of the following segment, and its offset in virtual
-// memory, or a nil slice if there are no more segment.
-func (d *dataIterator) Next() (offset int64, seg []byte) {
-	if d.n == 0 {
-		return 0, nil
-	}
-
-	// Format of mode 0 segment:
-	//
-	// varuint32 - mode (1 byte, 0)
-	// byte      - i32.const (0x41)
-	// varint64  - virtual address
-	// byte      - end of expression (0x0B)
-	// varuint64 - length
-	// bytes     - raw bytes of the segment
-
-	mode := d.uvarint()
-	if mode != 0x0 {
-		panic(fmt.Errorf("unsupported mode %#x", mode))
-	}
-
-	v := d.byte()
-	if v != 0x41 {
-		panic(fmt.Errorf("expected constant i32.const (0x41); got %#x", v))
-	}
-
-	offset = d.varint()
-
-	v = d.byte()
-	if v != 0x0B {
-		panic(fmt.Errorf("expected end of expr (0x0B); got %#x", v))
-	}
-
-	length := d.uvarint()
-	seg = d.read(int(length))
-	d.n--
-
-	return offset, seg
-}
-
-// SkipToDataOffset iterates over segments to return the bytes at a given data
-// offset, until the end of the segment that contains the offset, and the
-// virtual address of the byte at that offset.
-//
-// Panics if offset was already passed or the offset is out of bounds.
-func (d *dataIterator) SkipToDataOffset(offset int) (int64, []byte) {
-	if offset < d.offset {
-		panic(fmt.Errorf("offset %d requested by already at %d", offset, d.offset))
-	}
-	end := d.offset + len(d.b)
-	if offset >= d.offset+len(d.b) {
-		panic(fmt.Errorf("offset %d requested past data section %d", offset, end))
-	}
-
-	for d.offset <= offset {
-		vaddr, seg := d.Next()
-		if d.offset < offset {
-			continue
-		}
-		o := len(seg) + offset - d.offset
-		return vaddr + int64(o), seg[o:]
-	}
-
-	return 0, nil
-}
-
+// partialPCHeader is a small fraction of the PCHEader written by the linker.
+// See pclntabHeaderFromData for more details.
 type partialPCHeader struct {
 	address        uint64
 	funcnametabOff uint64
@@ -195,27 +32,43 @@ type partialPCHeader struct {
 	filetabOff     uint64
 }
 
-// pclntabFromData rebuilds the full pclntab from the segments of the Data
-// section of the module (b).
+func (p partialPCHeader) Valid() bool {
+	return p.address != 0
+}
+
+// pclntabFromData rebuilds a partial pclntab header from the segments of the
+// Data section of a module.
 //
 // Assumes the section is well-formed, and the segment has the layout described
 // in the 1.20.1 linker. Returns nil if the segment is missing. Does not check
 // whether pclntab contains actual useful data.
 //
-// See layout in the linker: https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/wasm/asm.go#L169-L185
-func pclntabFromData(b []byte) (partialPCHeader, []byte) {
-	// magic number of the start of pclntab for Go 1.20, little endian.
-	magic := []byte{0xf1, 0xff, 0xff, 0xff, 0x00, 0x00}
-	pclntabOffset := bytes.Index(b, magic)
+// The goal is to retrieve enough of the pclntab header to compute a needle for
+// the moduledata using the offsets contained in this header.
+//
+// See layout in the linker:
+// https://github.com/golang/go/blob/3e35df5edbb02ecf8efd6dd6993aabd5053bfc66/src/cmd/link/internal/ld/pcln.go#L235-L248
+func pclntabHeaderFromData(b []byte) partialPCHeader {
+	// magic number of the start of pclntab for Go 1.20, little endian. Also
+	// add constants for the wasm arch to have less chances of finding
+	// something that is not the pclntab. Constants:
+	// https://github.com/golang/go/blob/82d5ebce96761083f5313b180c6b368be1912d42/src/cmd/internal/sys/arch.go#L257-L268
+	needle := []byte{
+		0xf1, 0xff, 0xff, 0xff, 0x00, 0x00, // magic number
+		0x01, // MinLC
+		0x08, // PtrSize
+	}
+	pclntabOffset := bytes.Index(b, needle)
 	if pclntabOffset == -1 {
-		return partialPCHeader{}, nil
+		return partialPCHeader{}
 	}
 
 	d := newDataIterator(b)
 	vaddr, seg := d.SkipToDataOffset(pclntabOffset)
-	vm := vmem{Start: vaddr}
+	vm := vmemb{Start: vaddr}
 	vm.CopyAtAddress(vaddr, seg)
 
+	magic := needle[:6]
 	if !bytes.Equal(magic, seg[:len(magic)]) {
 		panic("segment should start by magic")
 	}
@@ -223,29 +76,13 @@ func pclntabFromData(b []byte) (partialPCHeader, []byte) {
 	if len(seg) < 8 {
 		panic("segment should at least contain header")
 	}
-	vm.Quantum = seg[len(magic)+0]
-	vm.Ptrsize = int(seg[len(magic)+1])
-
-	if vm.Ptrsize != 8 {
-		panic("only supports 64bit pclntab")
-	}
-
-	fillUntil := func(addr int) {
-		// fill the vm with segments until it has data at addr.
-		for !vm.Has(addr) {
-			vaddr, seg := d.Next()
-			if seg == nil {
-				panic("no more segment")
-			}
-			vm.CopyAtAddress(vaddr, seg)
-		}
-	}
 
 	readWord := func(word int) uint64 {
 		for {
-			x, ok := vm.PclntabOffset(word)
-			if ok {
-				return x
+			start := 8 + word*8
+			end := start + 8
+			if vm.Has(end) {
+				return binary.LittleEndian.Uint64(vm.b[start:])
 			}
 			vaddr, seg := d.Next()
 			if seg == nil {
@@ -255,94 +92,44 @@ func pclntabFromData(b []byte) (partialPCHeader, []byte) {
 		}
 	}
 
-	nfunctab := readWord(0)
-	// nfiletab := readWord(1)
-	// pcstart := readWord(2)
 	funcnametabOff := readWord(3)
 	cutabOff := readWord(4)
 	filetabOff := readWord(5)
-	// pctabAddr := readWord(6)
-	// funcdataAddr := readWord(7)
-	functabAddr := readWord(7)
 
-	functabFieldSize := 4
-
-	functabsize := (int(nfunctab)*2 + 1) * functabFieldSize
-	end := functabAddr + uint64(functabsize)
-	fillUntil(int(end))
-
-	// TODO: try to actually guess the end of pclntab.
-	for {
-		vaddr, seg := d.Next()
-		if seg == nil {
-			break
-		}
-		vm.CopyAtAddress(vaddr, seg)
-	}
-
-	if !bytes.HasPrefix(vm.b, magic) {
-		panic("pclntab should start with magic")
-	}
-	if uint64(len(vm.b)) < end {
-		panic("reconstructed pclntab should at least include end of functab")
-	}
-
-	pch := partialPCHeader{
+	return partialPCHeader{
 		address:        uint64(vaddr),
 		funcnametabOff: funcnametabOff,
 		cutabOff:       cutabOff,
 		filetabOff:     filetabOff,
 	}
-
-	return pch, vm.b
 }
 
-// moduledataFromData searches the data segments to find and reconstruct the
+// moduledataFromData searches the data segments to find the virtual address of
 // firstmoduledata struct embedded in the module.
 //
 // It is tricky because there is no marker to tell us where it starts. So
 // instead we look for pointers it should contain in specific fields. We compute
 // those pointers from the partial contents of the pclntab we already found.
 //
-// We know all those addresses are in the same data segment, but the whole
-// moduledata may not be.
-func moduledataFromData(pch partialPCHeader, b []byte) (moduledata, error) {
-	start := make([]byte, 16) // pchaddr and funcnametabaddr are one after the other.
-	binary.LittleEndian.PutUint64(start[:8], pch.address)
-	binary.LittleEndian.PutUint64(start[8:], pch.address+pch.funcnametabOff)
-	cutabaddr := make([]byte, 8)
-	binary.LittleEndian.PutUint64(cutabaddr, pch.address+pch.cutabOff)
-	filetabaddr := make([]byte, 8)
-	binary.LittleEndian.PutUint64(filetabaddr, pch.address+pch.filetabOff)
-
+// We know all those addresses are in the same data segment because they are
+// close enough together that they can't contain more than 8 zeroes between
+// them, not triggering the compression mechanism used by the wasm linker.
+func moduledataAddrFromData(pch partialPCHeader, b []byte) uint64 {
+	scratch := [4 * 8]byte{}
+	binary.LittleEndian.PutUint64(scratch[0*8:], pch.address)
+	binary.LittleEndian.PutUint64(scratch[1*8:], pch.address+pch.funcnametabOff)
+	binary.LittleEndian.PutUint64(scratch[2*8:], pch.address+pch.cutabOff)
+	binary.LittleEndian.PutUint64(scratch[3*8:], pch.address+pch.filetabOff)
+	start := scratch[0 : 2*8]
+	cutabaddr := scratch[2*8 : 3*8]
+	filetabaddr := scratch[3*8 : 4*8]
 	offset := findStartOfModuleData(b, start, cutabaddr, filetabaddr)
-
 	if offset == -1 {
-		return moduledata{}, fmt.Errorf("could not find moduledata bytes in data segments")
+		return 0
 	}
-
 	d := newDataIterator(b)
-	vaddr, seg := d.SkipToDataOffset(offset)
-	vm := vmem{Start: vaddr}
-	vm.CopyAtAddress(vaddr, seg)
-
-	size := int(unsafe.Sizeof(moduledata{}))
-
-	// fill the vm with segments until it has enough data
-	for !vm.Has(size) {
-		vaddr, seg := d.Next()
-		if seg == nil {
-			panic("no more segment")
-		}
-		vm.CopyAtAddress(vaddr, seg)
-	}
-
-	b = vm.b
-	md := moduledata{}
-	// TODO: parse other fields?
-	md.gofunc = ptr(binary.LittleEndian.Uint64(b[320:]))
-
-	return md, nil
+	vaddr, _ := d.SkipToDataOffset(offset)
+	return uint64(vaddr)
 }
 
 // returns -1 if not found.
@@ -373,121 +160,280 @@ func findStartOfModuleData(b, start, cutabaddr, filetabaddr []byte) int {
 	return -1
 }
 
-// vmem is a helper to rebuild virtual memory from data segments.
-type vmem struct {
-	// Virtual address of the first byte of memory.
-	Start int64
-
-	// pclntab layout format.
-	Quantum byte
-	Ptrsize int
-
-	// Reconstructed memory buffer.
-	b []byte
-}
-
-func (m *vmem) Has(addr int) bool {
-	return addr < len(m.b)
-}
-
-func (m *vmem) PclntabOffset(word int) (uint64, bool) {
-	s := 8 + word*m.Ptrsize
-	e := s + 8
-	if !m.Has(e) {
-		return 0, false
-	}
-	res := binary.LittleEndian.Uint64(m.b[s:])
-	return res, true
-}
-
-func (m *vmem) CopyAtAddress(addr int64, b []byte) {
-	end := int64(len(m.b)) + m.Start
-	if addr < end {
-		panic(fmt.Errorf("address %d already mapped (end=%d)", addr, end))
-	}
-	size := len(m.b)
-	zeroes := int(addr - end)
-	total := zeroes + len(b) + size
-	if cap(m.b) < total {
-		new := make([]byte, total)
-		copy(new, m.b)
-		m.b = new
-	} else {
-		m.b = m.b[:total]
-	}
-	copy(m.b[size+zeroes:], b)
-
-	if m.Start+int64(len(m.b)) != addr+int64(len(b)) {
-		panic("invalid copy")
-	}
-}
-
 // fid is the ID of a function, that is its number in the function section of
 // the module, which includes imports. In a given module, fid = fidx+imports.
+// This type exists to avoid errors related to mixing up function ids and
+// indexes.
 type fid int
 
-func buildPclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntabmapper, error) {
+func preparePclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntab, error) {
 	data := wasmdataSection(wasmbin)
 	if data == nil {
 		return nil, fmt.Errorf("no data section in the wasm binary")
 	}
-	pch, pclntab := pclntabFromData(data)
-	md, err := moduledataFromData(pch, data)
-	if err != nil {
-		return nil, err
+	pch := pclntabHeaderFromData(data)
+	if !pch.Valid() {
+		return nil, fmt.Errorf("could not find pclnheader in data section")
 	}
-	lt := gosym.NewLineTable(pclntab, 0)
-	t, err := gosym.NewTable(nil, lt)
-	if err != nil {
-		return nil, err
+	mdaddr := moduledataAddrFromData(pch, data)
+	if mdaddr == 0 {
+		return nil, fmt.Errorf("could not find moduledata in data section")
 	}
-	return &pclntabmapper{
-		t:          t,
-		info:       lt.RuntimeInfo(),
-		imported:   uint64(len(mod.ImportedFunctions())),
-		modName:    mod.Name(),
-		moduledata: md,
+	return &pclntab{
+		imported: uint64(len(mod.ImportedFunctions())),
+		modName:  mod.Name(),
+		datap:    ptr(mdaddr),
 	}, nil
 }
 
-type pclntabmapper struct {
-	t          *gosym.Table
-	info       gosym.RuntimeInfo
-	imported   uint64
-	modName    string
-	moduledata moduledata
+type funcID uint8
+
+// Copy of _func in runtime/runtime2.go. It has to have the same size.
+type _func struct {
+	EntryOff    uint32 // start pc, as offset from moduledata.text/pcHeader.textStart
+	NameOff     int32  // function name, as index into moduledata.funcnametab.
+	Args        int32  // in/out args size
+	Deferreturn uint32 // offset of start of a deferreturn call instruction from entry, if any.
+	Pcsp        uint32
+	Pcfile      uint32
+	Pcln        uint32
+	Npcdata     uint32
+	CuOffset    uint32 // runtime.cutab offset of this function's CU
+	StartLine   int32  // line number of start of function (func keyword/TEXT directive)
+	FuncID      goruntime.FuncID
+	Flag        goruntime.FuncFlag
+	_           [1]byte // pad
+	Nfuncdata   uint8
 }
 
-func (p *pclntabmapper) Locations(gofunc experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
-	// use the inline unwinder to retrieve all the location for this PC.
+// isInlined reports whether f should be re-interpreted as a *funcinl.
+func (f *_func) isInlined() bool {
+	return f.EntryOff == ^uint32(0) // see comment for funcinl.ones
+}
 
+// Pseudo-Func that is returned for PCs that occur in inlined code.
+// A *Func can be either a *_func or a *funcinl, and they are distinguished
+// by the first ptr.
+type funcinl struct {
+	ones      uint32 // set to ^0 to distinguish from _func
+	entry     ptr    // entry of the real (the "outermost") frame
+	name      string
+	file      string
+	line      int32
+	startLine int32
+}
+
+// A srcFunc represents a logical function in the source code. This may
+// correspond to an actual symbol in the binary text, or it may correspond to a
+// source function that has been inlined.
+type srcFunc struct {
+	datap     *moduledata
+	nameOff   int32
+	startLine int32
+	funcID    goruntime.FuncID
+}
+
+// Extra data around _func.
+type funcInfo struct {
+	*_func
+	md *moduledata
+	// offset in pclntab of the start of the _func.
+	_funcoff pclntabOff
+}
+
+func (f funcInfo) srcFunc() srcFunc {
+	if !f.valid() {
+		return srcFunc{}
+	}
+	return srcFunc{f.md, f.NameOff, f.StartLine, f.FuncID}
+}
+
+func (f funcInfo) valid() bool {
+	return f._func != nil
+}
+
+func (f funcInfo) entry() ptr {
+	return f.md.textAddr(f.EntryOff)
+}
+
+func (f funcInfo) name() string {
+	return f.md.funcName(f.NameOff)
+}
+
+// FileLine returns the file name and line number of the
+// source code corresponding to the program counter pc.
+// The result will not be accurate if pc is not a program
+// counter within f.
+func (f funcInfo) fileLine(pc ptr) (file string, line int) {
+	fn := f._func
+	if fn.isInlined() { // inlined version
+		fi := (*funcinl)(unsafe.Pointer(fn))
+		return fi.file, int(fi.line)
+	}
+	// Pass strict=false here, because anyone can call this function,
+	// and they might just be wrong about targetpc belonging to f.
+	file, line32 := funcline1(f, pc, false)
+	return file, int(line32)
+}
+
+func funcline1(f funcInfo, targetpc ptr, strict bool) (file string, line int32) {
+	datap := f.md
+	if !f.valid() {
+		return "?", 0
+	}
+	fileno, _ := pcvalue(f, f.Pcfile, targetpc, strict)
+	line, _ = pcvalue(f, f.Pcln, targetpc, strict)
+	if fileno == -1 || line == -1 || int(fileno) >= len(datap.filetab) {
+		// print("looking for ", hex(targetpc), " in ", funcname(f), " got file=", fileno, " line=", lineno, "\n")
+		return "?", 0
+	}
+	file = funcfile(f, fileno)
+	return
+}
+
+func funcfile(f funcInfo, fileno int32) string {
+	datap := f.md
+	if !f.valid() {
+		return "?"
+	}
+	// Make sure the cu index and file offset are valid
+	if fileoff := datap.cutab[f.CuOffset+uint32(fileno)]; fileoff != ^uint32(0) {
+		return cstring(datap.filetab[fileoff:])
+	}
+	// pcln section is corrupt.
+	return "?"
+}
+
+// index into moduledata.pclntable byte slice. This exists because
+// derefModuledata loses the virtual memory addresses of the slices it contains
+// (including the one of pclntab). A few functions performs pointer arithmetic
+// from the address of a _func. Instead of tracking the original virtual
+// addresses of all those slices, instead we use offsets into the dereferenced
+// byte array, which isn't much harded but avoids a lot of bookeeping and
+// derefs.
+type pclntabOff uint32
+
+func pcdatavalue1(f funcInfo, table uint32, targetpc ptr, strict bool) int32 {
+	if table >= f.Npcdata {
+		return -1
+	}
+	r, _ := pcvalue(f, pcdatastart(f, table), targetpc, strict)
+	return r
+}
+
+func pcdatastart(f funcInfo, table uint32) uint32 {
+	off := f._funcoff + pclntabOff(unsafe.Sizeof(_func{})) + pclntabOff(table)*4
+	return *(*uint32)(unsafe.Pointer(unsafe.SliceData(f.md.pclntable[off:])))
+}
+
+// Returns the offset from moduledata.gofunc for the i-th funcdata of f.
+func funcdataoffset(f funcInfo, index uint8) uint32 {
+	off := f._funcoff + pclntabOff(unsafe.Sizeof(_func{})) + pclntabOff(f.Npcdata)*4 + pclntabOff(index)*4
+	return *(*uint32)(unsafe.Pointer(unsafe.SliceData(f.md.pclntable[off:])))
+}
+
+// PCLNTAB provides symbol resolution for Go using the pclntab and moduledata
+// present in the memory of a given module.
+//
+// It is built in two steps: the first one before module instantiation
+// (preparePclntabSymbolizer), to initialize the fields that cannot be guessed
+// at runtime. Then it is lazily initialized from the module memory on its first
+// symbol resolution.
+//
+// Once memory is step, it is expected to stay the same throughout the lifetime
+// of this pclntab.
+type pclntab struct {
+	// Number of functions imported by the module.
+	imported uint64
+	// Name of the module.
+	modName string
+	// Virtual address of the firstmoduledata structure. Named like this for
+	// similarity with the Go implementation.
+	datap ptr
+
+	mem vmem
+	md  moduledata
+}
+
+// EnsureReady loads up from memory the necessary contents of moduledata, and
+// pclntab to be able to perform symbolization and provide enough information
+// about functions to walk the stack. Just once.
+func (p *pclntab) EnsureReady(mem vmem) {
+	if p.mem != nil {
+		if p.mem != mem {
+			panic("different memory used for pclntab")
+		}
+		return
+	}
+	p.mem = mem
+	p.md = derefModuledata(mem, p.datap)
+}
+
+// FindFunc searches the pclntab to build the FuncInfo that contains the
+// provided pc.
+//
+// TODO: support multiple go modules.
+// TODO: cache this, as it's on the hot path.
+func (p *pclntab) FindFunc(pc ptr) funcInfo {
+	// https://github.com/golang/go/blob/f90b4cd6554f4f20280aa5229cf42650ed47221d/src/runtime/symtab.go#L514
+	const nsub = 16
+	const minfunc = 16                 // minimum function size
+	const pcbucketsize = 256 * minfunc // size of bucket in the pc->func lookup table
+
+	pcOff, ok := p.md.textOff(pc)
+	if !ok {
+		return funcInfo{}
+	}
+
+	x := ptr(pcOff) + p.md.text - p.md.minpc
+	b := x / pcbucketsize
+	i := x % pcbucketsize / (pcbucketsize / nsub)
+
+	ffb := deref[findfuncbucket](p.mem, p.md.findfunctab+b*ptr(unsafe.Sizeof(findfuncbucket{})))
+
+	idx := ffb.idx + uint32(ffb.subbuckets[i])
+
+	// Find the ftab entry.
+	for p.md.ftab[idx+1].entryoff <= pcOff {
+		idx++
+	}
+
+	funcoff := p.md.ftab[idx].funcoff
+	_f := (*_func)(unsafe.Pointer(unsafe.SliceData(p.md.pclntable[funcoff:])))
+
+	return funcInfo{_func: _f, md: &p.md, _funcoff: pclntabOff(funcoff)}
+}
+
+// Locations perform the symolization of a physical pc belongging to a provided
+// function. Used when building the profile from the collected samples.
+func (p *pclntab) Locations(gofunc experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
 	// Assumption that pclntabmapper is only used in conjuction with
 	// goStackIterator.
 	f := gofunc.(goFunction)
 
 	locs := []location{}
 
-	var calleeFuncID gosym.FuncID
+	var calleeFuncID goruntime.FuncID
 
 	iu, uf := newInlineUnwinder(p, f.mem, f.info, symPC(f.info, ptr(pc)))
 	for ; uf.valid(); uf = iu.next(uf) {
 		sf := iu.srcFunc(uf)
-		if sf.FuncID == gosym.FuncIDWrapper && elideWrapperCalling(calleeFuncID) {
+		if sf.funcID == goruntime.FuncIDWrapper && elideWrapperCalling(calleeFuncID) {
 			// skip wrappers like stdlib
 			continue
 		}
 		ipc := uf.pc
-		calleeFuncID = sf.FuncID
+		calleeFuncID = sf.funcID
 
-		file, line, fn := p.t.PCToLine(uint64(ipc))
-		if fn == nil {
+		file, line, fn := p.PCToLine(ipc)
+		if !fn.valid() {
 			continue
 		}
 		locs = append(locs, location{
 			File:       file,
 			Line:       int64(line),
-			StableName: fn.Name,
-			HumanName:  fn.Name,
+			StableName: fn.name(),
+			HumanName:  fn.name(),
 		})
 	}
 
@@ -502,70 +448,36 @@ func (p *pclntabmapper) Locations(gofunc experimental.InternalFunction, pc exper
 // https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
 const funcValueOffset = 0x1000
 
-func (p *pclntabmapper) PCToFID(pc ptr) fid {
+func (p *pclntab) PCToFID(pc ptr) fid {
 	return fid(uint64(pc)>>16 + p.imported - funcValueOffset)
 }
 
-func (p *pclntabmapper) FIDToPC(f fid) ptr {
+func (p *pclntab) FIDToPC(f fid) ptr {
 	return ptr((funcValueOffset + f - fid(p.imported)) << 16)
 }
 
-func (p *pclntabmapper) PCToName(pc ptr) string {
-	f := p.t.PCToFunc(uint64(pc))
-	if f == nil {
+func (p *pclntab) PCToName(pc ptr) string {
+	f := p.FindFunc(pc)
+	if !f.valid() {
 		return ""
 	}
-	return f.Name
+	return f.name()
 }
 
-// ptr represents a unintptr in the original unwinder code. Here, the unwinder
-// executes in the host, so this type helps to avoid dereferencing the host
-// memory.
-type ptr uint64
+func (p *pclntab) PCToLine(pc ptr) (file string, line int, f funcInfo) {
+	f = p.FindFunc(pc)
+	if !f.valid() {
+		return
+	}
+	file, line = f.fileLine(pc)
+	return
+}
 
-// gptr represents a *g in the original code. It exists for the same reason as
+// gptr represents a *g in the guest memory. It exists for the same reason as
 // ptr, but is a separate type to avoid confusion between the two. The main
-// difference is a gPtr is not supposed to have arithmetic done on it outside
+// difference is a gptr is not supposed to have arithmetic done on it outside
 // rtmem. Also, easier to replace guintptr with a dedicated type.
-type gptr uint64
-
-// wrapper around Wazero's Memory to provide helpers for the implementation of
-// unwinder.
-//
-// Note: we could implement deref generically by reading the right number of
-// bytes for the shape and unsafe cast to the desired type. However, this would
-// break if the host is not little endian or uses a different pointer size type.
-// Taking the longer route here of providing dedicated function that perform
-// explicit endianess conversions, but this can probably be made faster with the
-// generic method in our most common architectures.
-type rtmem struct {
-	api.Memory
-}
-
-func (r rtmem) readU64(p ptr) uint64 {
-	x, ok := r.ReadUint64Le(uint32(p))
-	if !ok {
-		panic("invalid pointer dereference")
-	}
-	return x
-}
-
-// equivalent to *uintptr.
-func (r rtmem) derefPtr(p ptr) ptr {
-	return ptr(r.readU64(p))
-}
-
-// Reads the index-th element of a slice that starts at address p.
-func readSliceIndex[T any](r rtmem, p ptr, index int32) T {
-	var t T
-	s := uint32(unsafe.Sizeof(t))
-	b, ok := r.Read(uint32(p)+uint32(index)*s, s)
-	if !ok {
-		panic("invalid slice index read")
-	}
-	t = *(*T)(unsafe.Pointer((unsafe.SliceData(b))))
-	return t
-}
+type gptr ptr
 
 // Layout of g struct:
 //
@@ -603,39 +515,37 @@ func readSliceIndex[T any](r rtmem, p ptr, index int32) T {
 // goSigStack and sigmask are 0 because
 // https://github.com/golang/go/blob/b950cc8f11dc31cc9f6cfbed883818a7aa3abe94/src/runtime/os_wasm.go#L132
 
-func (r rtmem) gM(g gptr) ptr {
-	return ptr(r.readU64(ptr(g) + 8*6))
+func gM(m vmem, g gptr) ptr {
+	return deref[ptr](m, ptr(g)+8*6)
 }
 
-func (r rtmem) gMG0(g gptr) gptr {
-	m := r.gM(g)
-	return gptr(r.readU64(m + 0))
+func gMG0(m vmem, g gptr) gptr {
+	return deref[gptr](m, gM(m, g)+0)
 }
 
-func (r rtmem) gMCurg(g gptr) gptr {
-	m := r.gM(g)
-	return gptr(r.readU64(m + 144))
+func gMCurg(m vmem, g gptr) gptr {
+	return deref[gptr](m, gM(m, g)+144)
 }
 
-func (r rtmem) gSchedSp(g gptr) ptr {
-	return ptr(r.readU64(ptr(g) + 8*7))
+func gSchedSp(m vmem, g gptr) ptr {
+	return deref[ptr](m, ptr(g)+8*7)
 }
 
-func (r rtmem) gSchedPc(g gptr) ptr {
-	return ptr(r.readU64(ptr(g) + 8*8))
+func gSchedPc(m vmem, g gptr) ptr {
+	return deref[ptr](m, ptr(g)+8*8)
 }
 
-func (r rtmem) gSchedLr(g gptr) ptr {
-	return ptr(r.readU64(ptr(g) + 8*12))
+func gSchedLr(m vmem, g gptr) ptr {
+	return deref[ptr](m, ptr(g)+8*12)
 }
 
 // goStackIterator iterates over the physical frames of the Go stack. It is up
 // to the symbolizer (pclntabmapper) to expand those into logical frames to
 // account for inlining.
 type goStackIterator struct {
-	first bool
-	rt    *Runtime
-	pc    ptr
+	first   bool
+	pclntab *pclntab
+	pc      ptr
 	unwinder
 }
 
@@ -680,19 +590,19 @@ var _ experimental.StackIterator = (*goStackIterator)(nil)
 
 // elideWrapperCalling reports whether a wrapper function that called
 // function id should be elided from stack traces.
-func elideWrapperCalling(id gosym.FuncID) bool {
+func elideWrapperCalling(id goruntime.FuncID) bool {
 	// If the wrapper called a panic function instead of the
 	// wrapped function, we want to include it in stacks.
-	return !(id == gosym.FuncID_gopanic || id == gosym.FuncID_sigpanic || id == gosym.FuncID_panicwrap)
+	return !(id == goruntime.FuncID_gopanic || id == goruntime.FuncID_sigpanic || id == goruntime.FuncID_panicwrap)
 }
 
 // goFunction is a lazy implementation of wazero's FunctionDefinition and
 // InternalFunction, as the goStackIterator cannot map to an internal *function
 // in wazero.
 type goFunction struct {
-	mem  rtmem
-	sym  *pclntabmapper
-	info *gosym.FuncInfo
+	mem  vmem
+	sym  *pclntab
+	info funcInfo
 	pc   ptr
 
 	api.FunctionDefinition // required for WazeroOnly
@@ -756,28 +666,50 @@ type functab struct {
 	funcoff  uint32
 }
 
+// Mapping information for secondary text sections
+type textsect struct {
+	vaddr    ptr // prelinked section vaddr
+	end      ptr // vaddr + section length
+	baseaddr ptr // relocated section address
+}
+
+// findfuncbucket is an array of these structures.
+// Each bucket represents 4096 bytes of the text segment.
+// Each subbucket represents 256 bytes of the text segment.
+// To find a function given a pc, locate the bucket and subbucket for
+// that pc. Add together the idx and subbucket value to obtain a
+// function index. Then scan the functab array starting at that
+// index to find the target function.
+// This table uses 20 bytes for every 4096 bytes of code, or ~0.5% overhead.
+type findfuncbucket struct {
+	idx        uint32
+	subbuckets [16]byte
+}
+
+// moduledata comes from runtime/symtab.go. It is important it keeps the same
+// layout to be rebuilt from memory. If you uncomment a field here, make sure to
+// update derefModuleData accordingly.
 type moduledata struct {
-	pcHeader              ptr       // 0
-	funcnametab           []byte    // 8
-	cutab                 []uint32  // 32
-	filetab               []byte    // 56
-	pctab                 []byte    // 80
-	pclntable             []byte    // 104
-	ftab                  []functab // 128
-	findfunctab           ptr       // 152
-	minpc, maxpc          ptr       // 160
-	text, etext           ptr       // 176
-	noptrdata, enoptrdata ptr       // 192
-	data, edata           ptr       // 208
-	bss, ebss             ptr       // 224
-	noptrbss, enoptrbss   ptr       // 240
-	covctrs, ecovctrs     ptr       // 256
-	end, gcdata, gcbss    ptr       // 272
-	types, etypes         ptr       // 296
-	rodata                ptr       // 312
-	gofunc                ptr       // 320 go.func.*
-	//
-	//textsectmap []textsect
+	pcHeader              ptr        // 0
+	funcnametab           []byte     // 8
+	cutab                 []uint32   // 32
+	filetab               []byte     // 56
+	pctab                 []byte     // 80
+	pclntable             []byte     // 104
+	ftab                  []functab  // 128
+	findfunctab           ptr        // 152
+	minpc, maxpc          ptr        // 160
+	text, etext           ptr        // 176
+	noptrdata, enoptrdata ptr        // 192
+	data, edata           ptr        // 208
+	bss, ebss             ptr        // 224
+	noptrbss, enoptrbss   ptr        // 240
+	covctrs, ecovctrs     ptr        // 256
+	end, gcdata, gcbss    ptr        // 272
+	types, etypes         ptr        // 296
+	rodata                ptr        // 312
+	gofunc                ptr        // 320 go.func.*
+	textsectmap           []textsect // 328
 	//typelinks   []int32 // offsets from types
 	//itablinks   []*itab
 	//
@@ -802,4 +734,89 @@ type moduledata struct {
 	//bad bool // module failed to load and should be ignored
 	//
 	//next *moduledata
+}
+
+// funcName returns the string at nameOff in the function name table.
+func (md moduledata) funcName(nameOff int32) string {
+	if nameOff == 0 {
+		return ""
+	}
+	x := md.funcnametab[nameOff:]
+	return cstring(x)
+}
+
+// Captures the first null-terminated string from b.
+// TODO: no alloc
+func cstring(b []byte) string {
+	i := bytes.IndexByte(b, 0)
+	if i < 0 {
+		return ""
+	}
+	return string(b[:i])
+}
+
+// textOff is the opposite of textAddr. It converts a PC to a (virtual) offset
+// to md.text, and returns if the PC is in any Go text section.
+func (md moduledata) textOff(pc ptr) (uint32, bool) {
+	res := uint32(pc - md.text)
+	if len(md.textsectmap) > 1 {
+		for i, sect := range md.textsectmap {
+			if sect.baseaddr > pc {
+				// pc is not in any section.
+				return 0, false
+			}
+			end := sect.baseaddr + (sect.end - sect.vaddr)
+			// For the last section, include the end address (etext), as it is included in the functab.
+			if i == len(md.textsectmap) {
+				end++
+			}
+			if pc < end {
+				res = uint32(pc - sect.baseaddr + sect.vaddr)
+				break
+			}
+		}
+	}
+	return res, true
+}
+
+// textAddr returns md.text + off, with special handling for multiple text sections.
+// off is a (virtual) offset computed at internal linking time,
+// before the external linker adjusts the sections' base addresses.
+//
+// The text, or instruction stream is generated as one large buffer.
+// The off (offset) for a function is its offset within this buffer.
+// If the total text size gets too large, there can be issues on platforms like ppc64
+// if the target of calls are too far for the call instruction.
+// To resolve the large text issue, the text is split into multiple text sections
+// to allow the linker to generate long calls when necessary.
+// When this happens, the vaddr for each text section is set to its offset within the text.
+// Each function's offset is compared against the section vaddrs and ends to determine the containing section.
+// Then the section relative offset is added to the section's
+// relocated baseaddr to compute the function address.
+func (md moduledata) textAddr(off32 uint32) ptr {
+	off := ptr(off32)
+	res := md.text + off
+	if len(md.textsectmap) > 1 {
+		for i, sect := range md.textsectmap {
+			// For the last section, include the end address (etext), as it is included in the functab.
+			if off >= sect.vaddr && off < sect.end || (i == len(md.textsectmap)-1 && off == sect.end) {
+				res = sect.baseaddr + off - sect.vaddr
+				break
+			}
+		}
+	}
+	return res
+}
+
+// Fills the contents of module data from memory, including slices.
+func derefModuledata(mem vmem, addr ptr) moduledata {
+	m := deref[moduledata](mem, addr)
+	m.funcnametab = derefGoSlice(mem, m.funcnametab)
+	m.cutab = derefGoSlice(mem, m.cutab)
+	m.filetab = derefGoSlice(mem, m.filetab)
+	m.pctab = derefGoSlice(mem, m.pctab)
+	m.pclntable = derefGoSlice(mem, m.pclntable)
+	m.ftab = derefGoSlice(mem, m.ftab)
+	m.textsectmap = derefGoSlice(mem, m.textsectmap)
+	return m
 }

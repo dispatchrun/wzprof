@@ -1,18 +1,17 @@
 package wzprof
 
 import (
-	"github.com/stealthrocket/wzprof/internal/gosym"
+	"github.com/stealthrocket/wzprof/internal/goruntime"
 )
 
-// A light adaptation of the unwinder from go/src/runtime/traceback. It is
-// modified to work on a dedicated memory object instead of the current
-// program's memory, and simplified for cases that don't concern GOARCH=wasm.
-//
-// uintptr has been replaced to ptr, and architecture-dependent values replaced
-// for wasm. It still contains code to deal with race conditions because its was
-// little work to keep around, only involves an pointer nil check to execute,
-// and may be useful if wazero adds more concurrency when wasm threads support
-// lands.
+// An adaptation of the unwinder from go/src/runtime/traceback. It is modified
+// to work on a virtual memory object instead of the current program's memory,
+// and simplified for cases that don't concern GOARCH=wasm. uintptr has been
+// replaced to ptr, and architecture-dependent values replaced for wasm. It
+// still contains code to deal with race conditions because its was little work
+// to keep around, only involves an pointer nil check to execute, and may be
+// useful if wazero adds more concurrency when wasm threads support lands. Cgo
+// has been eliminated.
 
 // Copyright (c) 2009 The Go Authors. All rights reserved.
 //
@@ -45,7 +44,7 @@ import (
 type stkframe struct {
 	// fn is the function being run in this frame. If there is
 	// inlining, this is the outermost function.
-	fn *gosym.FuncInfo
+	fn funcInfo
 
 	// pc is the program counter within fn.
 	//
@@ -138,8 +137,8 @@ const (
 //		// ... use frame info in u ...
 //	}
 type unwinder struct {
-	symbols *pclntabmapper
-	mem     rtmem
+	mem     vmem
+	symbols *pclntab
 
 	// frame is the current physical stack frame, or all 0s if
 	// there is no frame.
@@ -156,7 +155,7 @@ type unwinder struct {
 
 	// calleeFuncID is the function ID of the caller of the current
 	// frame.
-	calleeFuncID gosym.FuncID
+	calleeFuncID goruntime.FuncID
 
 	// flags are the flags to this unwind. Some of these are updated as we
 	// unwind (see the flags documentation).
@@ -180,12 +179,12 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 	// If the PC is zero, it's likely a nil function call.
 	// Start in the caller's frame.
 	if frame.pc == 0 {
-		frame.pc = u.mem.derefPtr(frame.sp)
+		frame.pc = deref[ptr](u.mem, frame.sp)
 		frame.sp += goarchPtrSize
 	}
 
-	f := u.symbols.info.FindFunc(uint64(frame.pc))
-	if !f.Valid() {
+	f := u.symbols.FindFunc(frame.pc)
+	if !f.valid() {
 		u.finishInternal()
 		return
 	}
@@ -195,7 +194,7 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 	u.frame = frame
 	u.flags = flags
 	u.g = gp
-	u.calleeFuncID = gosym.FuncIDNormal
+	u.calleeFuncID = goruntime.FuncIDNormal
 
 	u.resolveInternal(true)
 }
@@ -247,40 +246,40 @@ func (u *unwinder) resolveInternal(innermost bool) {
 		// We also defensively check that this won't switch M's on us,
 		// which could happen at critical points in the scheduler.
 		// This ensures gp.m doesn't change from a stack jump.
-		if u.flags&unwindJumpStack != 0 && gp == u.mem.gMG0(gp) && u.mem.gMCurg(gp) != 0 && ptr(u.mem.gMCurg(gp)) == u.mem.gM(gp) {
+		if u.flags&unwindJumpStack != 0 && gp == gMG0(u.mem, gp) && gMCurg(u.mem, gp) != 0 && ptr(gMCurg(u.mem, gp)) == gM(u.mem, gp) {
 			switch f.FuncID {
-			case gosym.FuncID_morestack:
+			case goruntime.FuncID_morestack:
 				// morestack does not return normally -- newstack()
 				// gogo's to curg.sched. Match that.
 				// This keeps morestack() from showing up in the backtrace,
 				// but that makes some sense since it'll never be returned
 				// to.
-				gp = u.mem.gMCurg(gp)
+				gp = gMCurg(u.mem, gp)
 				u.g = gp
-				frame.pc = u.mem.gSchedPc(gp)
-				frame.fn = u.symbols.info.FindFunc(uint64(frame.pc))
+				frame.pc = gSchedPc(u.mem, gp)
+				frame.fn = u.symbols.FindFunc(frame.pc)
 				f = frame.fn
 				flag = f.Flag
-				frame.lr = u.mem.gSchedLr(gp)
-				frame.sp = u.mem.gSchedSp(gp)
-			case gosym.FuncID_systemstack:
+				frame.lr = gSchedLr(u.mem, gp)
+				frame.sp = gSchedSp(u.mem, gp)
+			case goruntime.FuncID_systemstack:
 				// systemstack returns normally, so just follow the
 				// stack transition.
-				gp = u.mem.gMCurg(gp)
+				gp = gMCurg(u.mem, gp)
 				u.g = gp
-				frame.sp = u.mem.gSchedSp(gp)
-				flag &^= gosym.FuncFlagSPWrite
+				frame.sp = gSchedSp(u.mem, gp)
+				flag &^= goruntime.FuncFlagSPWrite
 			}
 		}
-		frame.fp = frame.sp + ptr(funcspdelta(u.symbols.info.Pctab, f, frame.pc))
+		frame.fp = frame.sp + ptr(funcspdelta(f, frame.pc))
 		frame.fp += goarchPtrSize
 	}
 
 	// Derive link register.
-	if flag&gosym.FuncFlagTopFrame != 0 {
+	if flag&goruntime.FuncFlagTopFrame != 0 {
 		// This function marks the top of the stack. Stop the traceback.
 		frame.lr = 0
-	} else if flag&gosym.FuncFlagSPWrite != 0 {
+	} else if flag&goruntime.FuncFlagSPWrite != 0 {
 		// The function we are in does a write to SP that we don't know
 		// how to encode in the spdelta table. Examples include context
 		// switch routines like runtime.gogo but also any code that switches
@@ -307,7 +306,7 @@ func (u *unwinder) resolveInternal(innermost bool) {
 		var lrPtr ptr
 		if frame.lr == 0 {
 			lrPtr = frame.fp - goarchPtrSize
-			frame.lr = u.mem.derefPtr(lrPtr)
+			frame.lr = deref[ptr](u.mem, lrPtr)
 		}
 	}
 
@@ -325,9 +324,9 @@ func (u *unwinder) resolveInternal(innermost bool) {
 	// deferproc a second time (if the corresponding deferred func recovers).
 	// In the latter case, use a deferreturn call site as the continuation pc.
 	frame.continpc = frame.pc
-	if u.calleeFuncID == gosym.FuncID_sigpanic {
+	if u.calleeFuncID == goruntime.FuncID_sigpanic {
 		if frame.fn.Deferreturn != 0 {
-			frame.continpc = ptr(frame.fn.Entry + uint64(frame.fn.Deferreturn) + 1)
+			frame.continpc = frame.fn.entry() + ptr(frame.fn.Deferreturn) + 1
 			// Note: this may perhaps keep return variables alive longer than
 			// strictly necessary, as we are using "function has a defer statement"
 			// as a proxy for "function actually deferred something". It seems
@@ -352,8 +351,8 @@ func (u *unwinder) next() {
 		u.finishInternal()
 		return
 	}
-	flr := u.symbols.info.FindFunc(uint64(frame.lr))
-	if !flr.Valid() {
+	flr := u.symbols.FindFunc(frame.lr)
+	if !flr.valid() {
 		frame.lr = 0
 		u.finishInternal()
 		return
@@ -366,7 +365,7 @@ func (u *unwinder) next() {
 		panic("traceback stuck")
 	}
 
-	injectedCall := f.FuncID == gosym.FuncID_sigpanic || f.FuncID == gosym.FuncID_asyncPreempt || f.FuncID == gosym.FuncID_debugCallV2
+	injectedCall := f.FuncID == goruntime.FuncID_sigpanic || f.FuncID == goruntime.FuncID_asyncPreempt || f.FuncID == goruntime.FuncID_debugCallV2
 	if injectedCall {
 		u.flags |= unwindTrap
 	} else {
@@ -392,8 +391,8 @@ func (u *unwinder) next() {
 // can be at function entry when the frame is initialized without actually
 // running code, like in runtime.mstart, in which case this returns frame.pc
 // because that's the best we can do.
-func symPC(fn *gosym.FuncInfo, pc ptr) ptr {
-	if pc > ptr(fn.Entry) {
+func symPC(fn funcInfo, pc ptr) ptr {
+	if pc > fn.entry() {
 		// Regular call.
 		return pc - 1
 	}
@@ -407,27 +406,27 @@ func (u *unwinder) finishInternal() {
 	u.frame.pc = 0
 }
 
-func funcspdelta(pctab []byte, f *gosym.FuncInfo, targetpc ptr) int32 {
-	x, _ := pcvalue(pctab, f, f.Pcsp, targetpc, true)
+func funcspdelta(f funcInfo, targetpc ptr) int32 {
+	x, _ := pcvalue(f, f.Pcsp, targetpc, true)
 	return x
 }
 
 // Returns the PCData value, and the PC where this value starts.
-func pcvalue(pctab []byte, f *gosym.FuncInfo, off uint32, targetpc ptr, strict bool) (int32, ptr) {
+func pcvalue(f funcInfo, off uint32, targetpc ptr, strict bool) (int32, ptr) {
 	if off == 0 {
 		return -1, 0
 	}
 
-	if !f.Valid() {
+	if !f.valid() {
 		panic("no module data")
 	}
-	p := pctab[off:]
-	pc := ptr(f.Entry)
+	p := f.md.pctab[off:]
+	pc := f.entry()
 	prevpc := pc
 	val := int32(-1)
 	for {
 		var ok bool
-		p, ok = step(p, &pc, &val, pc == ptr(f.Entry))
+		p, ok = step(p, &pc, &val, pc == f.entry())
 		if !ok {
 			break
 		}
@@ -500,7 +499,7 @@ func readvarint(p []byte) (read uint32, val uint32) {
 
 // inlinedCall is the encoding of entries in the FUNCDATA_InlTree table.
 type inlinedCall struct {
-	funcID    gosym.FuncID // type of the called function
+	funcID    goruntime.FuncID // type of the called function
 	_         [3]byte
 	nameOff   int32 // offset into pclntab for name of called function
 	parentPc  int32 // position of an instruction whose source position is the call site (offset from entry)
@@ -508,9 +507,9 @@ type inlinedCall struct {
 }
 
 type inlineUnwinder struct {
-	symbols *pclntabmapper
-	mem     rtmem
-	f       *gosym.FuncInfo
+	symbols *pclntab
+	mem     vmem
+	f       funcInfo
 	inlTree ptr // Address of the array of inlinedCall entries
 }
 
@@ -520,22 +519,21 @@ func (u *inlineUnwinder) next(uf inlineFrame) inlineFrame {
 		uf.pc = 0
 		return uf
 	}
-	c := readSliceIndex[inlinedCall](u.mem, u.inlTree, uf.index)
-	return u.resolveInternal(ptr(u.f.Entry) + ptr(c.parentPc))
+	c := derefArrayIndex[inlinedCall](u.mem, u.inlTree, uf.index)
+	return u.resolveInternal(u.f.entry() + ptr(c.parentPc))
 }
 
 // srcFunc returns the srcFunc representing the given frame.
-func (u *inlineUnwinder) srcFunc(uf inlineFrame) gosym.SrcFunc {
+func (u *inlineUnwinder) srcFunc(uf inlineFrame) srcFunc {
 	if uf.index < 0 {
-		return u.f.SrcFunc()
+		return u.f.srcFunc()
 	}
-	t := readSliceIndex[inlinedCall](u.mem, u.inlTree, uf.index)
-	// t := &u.inlTree[uf.index]
-	return gosym.SrcFunc{
-		// u.f.datap,
-		NameOff:   t.nameOff,
-		StartLine: t.startLine,
-		FuncID:    t.funcID,
+	t := derefArrayIndex[inlinedCall](u.mem, u.inlTree, uf.index)
+	return srcFunc{
+		datap:     u.f.md,
+		nameOff:   t.nameOff,
+		startLine: t.startLine,
+		funcID:    t.funcID,
 	}
 }
 
@@ -544,16 +542,8 @@ func (u *inlineUnwinder) resolveInternal(pc ptr) inlineFrame {
 		pc: pc,
 		// Conveniently, this returns -1 if there's an error, which is the same
 		// value we use for the outermost frame.
-		index: pcdatavalue1(u.symbols.info.Pctab, u.f, gosym.PCDATA_InlTreeIndex, pc, false),
+		index: pcdatavalue1(u.f, goruntime.PCDATA_InlTreeIndex, pc, false),
 	}
-}
-
-func pcdatavalue1(pctab []byte, f *gosym.FuncInfo, table uint32, targetpc ptr, strict bool) int32 {
-	if table >= f.Npcdata {
-		return -1
-	}
-	r, _ := pcvalue(pctab, f, f.PcdataOffset(table), targetpc, strict)
-	return r
 }
 
 // An inlineFrame is a position in an inlineUnwinder.
@@ -572,8 +562,8 @@ func (uf inlineFrame) valid() bool {
 	return uf.pc != 0
 }
 
-func newInlineUnwinder(symbols *pclntabmapper, mem rtmem, f *gosym.FuncInfo, pc ptr) (inlineUnwinder, inlineFrame) {
-	inldataAddr := funcdata(symbols, f, gosym.FUNCDATA_InlTree)
+func newInlineUnwinder(symbols *pclntab, mem vmem, f funcInfo, pc ptr) (inlineUnwinder, inlineFrame) {
+	inldataAddr := funcdata(symbols, f, goruntime.FUNCDATA_InlTree)
 	if inldataAddr == 0 {
 		return inlineUnwinder{symbols: symbols, mem: mem, f: f}, inlineFrame{pc: pc, index: -1}
 	}
@@ -583,13 +573,12 @@ func newInlineUnwinder(symbols *pclntabmapper, mem rtmem, f *gosym.FuncInfo, pc 
 
 // funcdata returns a pointer to the ith funcdata for f.
 // funcdata should be kept in sync with cmd/link:writeFuncs.
-func funcdata(symbols *pclntabmapper, f *gosym.FuncInfo, i uint8) ptr {
+func funcdata(symbols *pclntab, f funcInfo, i uint8) ptr {
 	if i >= f.Nfuncdata {
 		return 0
 	}
-	base := symbols.moduledata.gofunc
-	// base := f.datap.gofunc // load gofunc address early so that we calculate during cache misses
-	off := f.FuncDataOffset(i)
+	base := symbols.md.gofunc
+	off := funcdataoffset(f, i)
 
 	// Return off == ^uint32(0) ? 0 : f.datap.gofunc + uintptr(off), but without branches.
 	// The compiler calculates mask on most architectures using conditional assignment.
