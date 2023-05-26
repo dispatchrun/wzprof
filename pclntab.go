@@ -186,8 +186,6 @@ func preparePclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclnt
 	}, nil
 }
 
-type funcID uint8
-
 // Copy of _func in runtime/runtime2.go. It has to have the same size.
 type _func struct {
 	EntryOff    uint32 // start pc, as offset from moduledata.text/pcHeader.textStart
@@ -666,7 +664,7 @@ type functab struct {
 	funcoff  uint32
 }
 
-// Mapping information for secondary text sections
+// Mapping information for secondary text sections.
 type textsect struct {
 	vaddr    ptr // prelinked section vaddr
 	end      ptr // vaddr + section length
@@ -689,51 +687,31 @@ type findfuncbucket struct {
 // moduledata comes from runtime/symtab.go. It is important it keeps the same
 // layout to be rebuilt from memory. If you uncomment a field here, make sure to
 // update derefModuleData accordingly.
+// nolint:unused
 type moduledata struct {
-	pcHeader              ptr        // 0
-	funcnametab           []byte     // 8
-	cutab                 []uint32   // 32
-	filetab               []byte     // 56
-	pctab                 []byte     // 80
-	pclntable             []byte     // 104
-	ftab                  []functab  // 128
-	findfunctab           ptr        // 152
-	minpc, maxpc          ptr        // 160
-	text, etext           ptr        // 176
-	noptrdata, enoptrdata ptr        // 192
-	data, edata           ptr        // 208
-	bss, ebss             ptr        // 224
-	noptrbss, enoptrbss   ptr        // 240
-	covctrs, ecovctrs     ptr        // 256
-	end, gcdata, gcbss    ptr        // 272
-	types, etypes         ptr        // 296
-	rodata                ptr        // 312
-	gofunc                ptr        // 320 go.func.*
-	textsectmap           []textsect // 328
-	//typelinks   []int32 // offsets from types
-	//itablinks   []*itab
-	//
-	//ptab []ptabEntry
-	//
-	//pluginpath string
-	//pkghashes  []modulehash
-	//
-	//// This slice records the initializing tasks that need to be
-	//// done to start up the program. It is built by the linker.
-	//inittasks []*initTask
-	//
-	//modulename   string
-	//modulehashes []modulehash
-	//
-	//hasmain uint8 // 1 if module contains the main function, 0 otherwise
-	//
-	//gcdatamask, gcbssmask bitvector
-	//
-	//typemap map[uint32]uintptr // offset to *_rtype in previous module
-	//
-	//bad bool // module failed to load and should be ignored
-	//
-	//next *moduledata
+	pcHeader              ptr
+	funcnametab           []byte
+	cutab                 []uint32
+	filetab               []byte
+	pctab                 []byte
+	pclntable             []byte
+	ftab                  []functab
+	findfunctab           ptr
+	minpc, maxpc          ptr
+	text, etext           ptr
+	noptrdata, enoptrdata ptr
+	data, edata           ptr
+	bss, ebss             ptr
+	noptrbss, enoptrbss   ptr
+	covctrs, ecovctrs     ptr
+	end, gcdata, gcbss    ptr
+	types, etypes         ptr
+	rodata                ptr
+	gofunc                ptr //  go.func.*
+	textsectmap           []textsect
+	// more fields we don't care about now.
+	// ...
+	// next *moduledata
 }
 
 // funcName returns the string at nameOff in the function name table.
@@ -746,7 +724,7 @@ func (md moduledata) funcName(nameOff int32) string {
 }
 
 // Captures the first null-terminated string from b.
-// TODO: no alloc
+// TODO: no alloc.
 func cstring(b []byte) string {
 	i := bytes.IndexByte(b, 0)
 	if i < 0 {

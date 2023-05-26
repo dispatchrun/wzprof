@@ -17,15 +17,6 @@ issues:
     - path: _test.go
       linters:
         - errcheck
-    # Those two files are direct copies from golang/go.
-    - path: internal/gosym/pclntab.go
-      linters:
-        - errcheck
-        - godot
-    - path: internal/gosym/symtab.go
-      linters:
-        - errcheck
-        - godot
 
 linters-settings:
   depguard:
