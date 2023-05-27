@@ -140,7 +140,7 @@ func findStartOfModuleData(b, start, cutabaddr, filetabaddr []byte) int {
 	// offset 56: filetab address
 	for begin := 0; begin < len(b); {
 		startIndex := bytes.Index(b[begin:], start)
-		if startIndex < -1 {
+		if startIndex < 0 {
 			return -1
 		}
 		i := startIndex + 32
