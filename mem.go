@@ -96,7 +96,7 @@ func (p *MemoryProfiler) Count() int {
 func (p *MemoryProfiler) SampleType() []*profile.ValueType {
 	sampleType := []*profile.ValueType{
 		{Type: "alloc_objects", Unit: "count"},
-		{Type: "alloc_space", Unit: "byte"},
+		{Type: "alloc_space", Unit: "bytes"},
 	}
 
 	if p.inuse != nil {
@@ -105,7 +105,7 @@ func (p *MemoryProfiler) SampleType() []*profile.ValueType {
 		// sample values in buildProfile.
 		sampleType = append(sampleType,
 			&profile.ValueType{Type: "inuse_objects", Unit: "count"},
-			&profile.ValueType{Type: "inuse_space", Unit: "byte"},
+			&profile.ValueType{Type: "inuse_space", Unit: "bytes"},
 		)
 	}
 
