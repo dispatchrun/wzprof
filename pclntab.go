@@ -14,13 +14,8 @@ import (
 )
 
 // Try to detect if the module was compiled by golang/go (not by tinygo).
-func compiledByGo(mod wazero.CompiledModule) bool {
-	for _, s := range mod.CustomSections() {
-		if s.Name() == "go:buildid" {
-			return true
-		}
-	}
-	return false
+func binCompiledByGo(b []byte) bool {
+	return wasmHasCustomSection(b, "go:buildid")
 }
 
 // partialPCHeader is a small fraction of the PCHEader written by the linker.

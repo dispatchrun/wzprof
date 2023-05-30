@@ -23,23 +23,60 @@ type stackIteratorMaker interface {
 
 // Runtime contains information specific to the guest runtime.
 type Runtime struct {
-	symbols       symbolizer
-	stackIterator stackIteratorMaker
+	filteredFunctions map[string]bool
+	symbols           symbolizer
+	stackIterator     stackIteratorMaker
+
+	isGo bool
 }
 
 // NewRuntime creates a new runtime with sensible defaults.
-func NewRuntime() *Runtime {
-	return &Runtime{
+func NewRuntime(wasm []byte) *Runtime {
+	r := &Runtime{
 		stackIterator: wasmStackIteratorMaker{},
 		symbols:       noopsymbolizer{},
 	}
+
+	if binCompiledByGo(wasm) {
+		r.isGo = true
+		// Those functions are special. They use a different calling
+		// convention. Their call sites do not update the stack pointer,
+		// which makes it impossible to correctly walk the stack.
+		//
+		// https://github.com/golang/go/blob/7ad92e95b56019083824492fbec5bb07926d8ebd/src/cmd/internal/obj/wasm/wasmobj.go#LL907C18-L930C2
+		r.filteredFunctions = map[string]bool{
+			"_rt0_wasm_js":            true,
+			"_rt0_wasm_wasip1":        true,
+			"wasm_export_run":         true,
+			"wasm_export_resume":      true,
+			"wasm_export_getsp":       true,
+			"wasm_pc_f_loop":          true,
+			"gcWriteBarrier":          true,
+			"runtime.gcWriteBarrier1": true,
+			"runtime.gcWriteBarrier2": true,
+			"runtime.gcWriteBarrier3": true,
+			"runtime.gcWriteBarrier4": true,
+			"runtime.gcWriteBarrier5": true,
+			"runtime.gcWriteBarrier6": true,
+			"runtime.gcWriteBarrier7": true,
+			"runtime.gcWriteBarrier8": true,
+			"runtime.wasmDiv":         true,
+			"runtime.wasmTruncS":      true,
+			"runtime.wasmTruncU":      true,
+			"cmpbody":                 true,
+			"memeqbody":               true,
+			"memcmp":                  true,
+			"memchr":                  true,
+		}
+	}
+
+	return r
 }
 
 // PrepareModule selects the most appropriate analysis functions for the guest
 // code in the provided module.
 func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
-	switch {
-	case compiledByGo(mod):
+	if r.isGo {
 		s, err := preparePclntabSymbolizer(wasm, mod)
 		if err != nil {
 			return err
@@ -51,7 +88,7 @@ func (r *Runtime) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 				unwinder: unwinder{symbols: s},
 			},
 		}
-	default:
+	} else {
 		r.symbols, _ = buildDwarfSymbolizer(mod) // TODO: surface error as warning?
 	}
 

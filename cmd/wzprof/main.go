@@ -57,7 +57,7 @@ func (prog *program) run(ctx context.Context) error {
 		return fmt.Errorf("reading wasm module: %w", err)
 	}
 
-	rt := wzprof.NewRuntime()
+	rt := wzprof.NewRuntime(wasmCode)
 
 	cpu := wzprof.NewCPUProfiler(rt, wzprof.HostTime(prog.hostTime))
 	mem := wzprof.NewMemoryProfiler(rt, wzprof.InuseMemory(prog.inuseMemory))

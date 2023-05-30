@@ -5,6 +5,35 @@ import (
 	"fmt"
 )
 
+// Returns true if the wasm module binary b contains a custom section with this
+// name.
+func wasmHasCustomSection(b []byte, name string) bool {
+	const customSectionId = 0
+	if len(b) < 8 {
+		return false
+	}
+	b = b[8:] // skip magic+version
+	for len(b) > 2 {
+		id := b[0]
+		b = b[1:]
+		length, n := binary.Uvarint(b)
+		b = b[n:]
+
+		if id == customSectionId {
+			nameLen, n := binary.Uvarint(b)
+			b = b[n:]
+			m := string(b[:nameLen])
+			if m == name {
+				return true
+			}
+			b = b[length-uint64(n):]
+		} else {
+			b = b[length:]
+		}
+	}
+	return false
+}
+
 // The functions in this file inspect the contents of a well-formed wasm-binary.
 // They are very weak parsers: they should be called on a valid module, or may
 // panic. Eventually this code should be replaced by exposing the right APIs
