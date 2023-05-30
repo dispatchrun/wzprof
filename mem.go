@@ -25,7 +25,7 @@ import (
 // the program, while "inuse_objects" and "inuse_space" capture the current state
 // of the program at the time the profile is taken.
 type MemoryProfiler struct {
-	rt    *Runtime
+	s     *Support
 	mutex sync.Mutex
 	alloc stackCounterMap
 	inuse map[uint32]memoryAllocation
@@ -54,9 +54,9 @@ type memoryAllocation struct {
 
 // NewMemoryProfiler constructs a new instance of MemoryProfiler using the given
 // time function to record the profile execution time.
-func NewMemoryProfiler(rt *Runtime, options ...MemoryProfilerOption) *MemoryProfiler {
+func NewMemoryProfiler(s *Support, options ...MemoryProfilerOption) *MemoryProfiler {
 	p := &MemoryProfiler{
-		rt:    rt,
+		s:     s,
 		alloc: make(stackCounterMap),
 		start: time.Now(),
 	}
@@ -70,7 +70,7 @@ func NewMemoryProfiler(rt *Runtime, options ...MemoryProfilerOption) *MemoryProf
 // a profile representing the state of the program memory.
 func (p *MemoryProfiler) NewProfile(sampleRate float64) *profile.Profile {
 	ratio := 1 / sampleRate
-	return buildProfile(p.rt, p.snapshot(), p.start, time.Since(p.start), p.SampleType(),
+	return buildProfile(p.s, p.snapshot(), p.start, time.Since(p.start), p.SampleType(),
 		[]float64{ratio, ratio, ratio, ratio},
 	)
 }
@@ -181,21 +181,21 @@ func (p *MemoryProfiler) NewFunctionListener(def api.FunctionDefinition) experim
 	switch def.Name() {
 	// C standard library, Rust
 	case "malloc":
-		return lrtAdapter{p.rt, &mallocProfiler{memory: p}}
+		return supportedListener{p.s, &mallocProfiler{memory: p}}
 	case "calloc":
-		return lrtAdapter{p.rt, &callocProfiler{memory: p}}
+		return supportedListener{p.s, &callocProfiler{memory: p}}
 	case "realloc":
-		return lrtAdapter{p.rt, &reallocProfiler{memory: p}}
+		return supportedListener{p.s, &reallocProfiler{memory: p}}
 	case "free":
-		return lrtAdapter{p.rt, &freeProfiler{memory: p}}
+		return supportedListener{p.s, &freeProfiler{memory: p}}
 
 	// Go
 	case "runtime.mallocgc":
-		return lrtAdapter{p.rt, &goRuntimeMallocgcProfiler{memory: p}}
+		return supportedListener{p.s, &goRuntimeMallocgcProfiler{memory: p}}
 
 	// TinyGo
 	case "runtime.alloc":
-		return lrtAdapter{p.rt, &mallocProfiler{memory: p}}
+		return supportedListener{p.s, &mallocProfiler{memory: p}}
 
 	default:
 		return nil

@@ -57,10 +57,10 @@ func (prog *program) run(ctx context.Context) error {
 		return fmt.Errorf("reading wasm module: %w", err)
 	}
 
-	rt := wzprof.NewRuntime(wasmCode)
+	s := wzprof.NewSupport(wasmCode)
 
-	cpu := wzprof.NewCPUProfiler(rt, wzprof.HostTime(prog.hostTime))
-	mem := wzprof.NewMemoryProfiler(rt, wzprof.InuseMemory(prog.inuseMemory))
+	cpu := wzprof.NewCPUProfiler(s, wzprof.HostTime(prog.hostTime))
+	mem := wzprof.NewMemoryProfiler(s, wzprof.InuseMemory(prog.inuseMemory))
 
 	var listeners []experimental.FunctionListenerFactory
 	if prog.cpuProfile != "" || prog.pprofAddr != "" {
@@ -92,7 +92,7 @@ func (prog *program) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("compiling wasm module: %w", err)
 	}
-	err = rt.PrepareModule(wasmCode, compiledModule)
+	err = s.PrepareModule(wasmCode, compiledModule)
 	if err != nil {
 		return fmt.Errorf("preparing wasm module: %w", err)
 	}
