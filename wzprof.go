@@ -17,8 +17,11 @@ import (
 	"golang.org/x/exp/slices"
 )
 
-// Support contains information specific to the guest runtime.
-type Support struct {
+// Profiling mechanism for a given WASM binary. Entry point to generate
+// Profilers.
+type Profiling struct {
+	wasm []byte
+
 	filteredFunctions map[string]bool
 	symbols           symbolizer
 	stackIterator     func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
@@ -26,9 +29,11 @@ type Support struct {
 	isGo bool
 }
 
-// NewSupport creates a new runtime with sensible defaults.
-func NewSupport(wasm []byte) *Support {
-	r := &Support{
+// ProfilingFor a given wasm binary. The resulting Profiling needs to be
+// prepared after Wazero module compilation.
+func ProfilingFor(wasm []byte) *Profiling {
+	r := &Profiling{
+		wasm:    wasm,
 		symbols: noopsymbolizer{},
 		stackIterator: func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
 			return wasmsi
@@ -71,21 +76,33 @@ func NewSupport(wasm []byte) *Support {
 	return r
 }
 
-// PrepareModule selects the most appropriate analysis functions for the guest
+// CPUProfiler constructs a new instance of CPUProfiler using the given time
+// function to record the CPU time consumed.
+func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
+	return newCPUProfiler(p, options...)
+}
+
+// MemoryProfiler constructs a new instance of MemoryProfiler using the given
+// time function to record the profile execution time.
+func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
+	return newMemoryProfiler(p, options...)
+}
+
+// Prepare selects the most appropriate analysis functions for the guest
 // code in the provided module.
-func (r *Support) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
-	if r.isGo {
-		s, err := preparePclntabSymbolizer(wasm, mod)
+func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
+	if p.isGo {
+		s, err := preparePclntabSymbolizer(p.wasm, mod)
 		if err != nil {
 			return err
 		}
 
-		r.symbols = s
+		p.symbols = s
 		si := &goStackIterator{
 			pclntab:  s,
 			unwinder: unwinder{symbols: s},
 		}
-		r.stackIterator = func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
+		p.stackIterator = func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
 			imod := mod.(experimental.InternalModule)
 			si.mem = imod.Memory()
 			si.pclntab.EnsureReady(si.mem)
@@ -97,29 +114,29 @@ func (r *Support) PrepareModule(wasm []byte, mod wazero.CompiledModule) error {
 			return si
 		}
 	} else {
-		r.symbols, _ = buildDwarfSymbolizer(mod) // TODO: surface error as warning?
+		p.symbols, _ = buildDwarfSymbolizer(mod) // TODO: surface error as warning?
 	}
 
 	return nil
 }
 
-// supportedListener wraps a FunctionListener to adapt its stack iterator to the
+// profilingListener wraps a FunctionListener to adapt its stack iterator to the
 // appropriate implementation according to the module support.
-type supportedListener struct {
-	s *Support
+type profilingListener struct {
+	s *Profiling
 	l experimental.FunctionListener
 }
 
-func (s supportedListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
+func (s profilingListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
 	si = s.s.stackIterator(mod, def, si)
 	s.l.Before(ctx, mod, def, params, si)
 }
 
-func (s supportedListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
+func (s profilingListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
 	s.l.After(ctx, mod, def, results)
 }
 
-func (s supportedListener) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error) {
+func (s profilingListener) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error) {
 	s.l.Abort(ctx, mod, def, err)
 }
 
@@ -189,7 +206,7 @@ type location struct {
 	HumanName  string
 }
 
-func locationForCall(s *Support, fn experimental.InternalFunction, pc experimental.ProgramCounter, funcs map[string]*profile.Function) *profile.Location {
+func locationForCall(p *Profiling, fn experimental.InternalFunction, pc experimental.ProgramCounter, funcs map[string]*profile.Function) *profile.Location {
 	// Cache miss. Get or create function and all the line
 	// locations associated with inlining.
 	var locations []location
@@ -199,7 +216,7 @@ func locationForCall(s *Support, fn experimental.InternalFunction, pc experiment
 	out := &profile.Location{}
 
 	if pc > 0 {
-		out.Address, locations = s.symbols.Locations(fn, pc)
+		out.Address, locations = p.symbols.Locations(fn, pc)
 		symbolFound = len(locations) > 0
 	}
 	if len(locations) == 0 {
@@ -391,7 +408,7 @@ type sampleType interface {
 	sampleValue() []int64
 }
 
-func buildProfile[T sampleType](s *Support, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType, ratios []float64) *profile.Profile {
+func buildProfile[T sampleType](p *Profiling, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType, ratios []float64) *profile.Profile {
 	prof := &profile.Profile{
 		SampleType:    sampleType,
 		Sample:        make([]*profile.Sample, 0, len(samples)),
@@ -415,7 +432,7 @@ func buildProfile[T sampleType](s *Support, samples map[uint64]T, start time.Tim
 			key := makeLocationKey(def, pc)
 			loc := locationCache[key]
 			if loc == nil {
-				loc = locationForCall(s, fn, pc, functionCache)
+				loc = locationForCall(p, fn, pc, functionCache)
 				loc.ID = locationID
 				locationID++
 				locationCache[key] = loc

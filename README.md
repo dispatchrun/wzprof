@@ -107,9 +107,9 @@ Wazero runtime within a Go program:
 ```go
 sampleRate := 1.0
 
-rt := wzprof.NewRuntime()
-cpu := wzprof.NewCPUProfiler(rt)
-mem := wzprof.NewMemoryProfiler(rt)
+p := wzprof.ProfilingFor(wasmCode)
+cpu := p.CPUProfiler()
+mem := p.MemoryProfiler()
 
 ctx := context.WithValue(context.Background(),
 	experimental.FunctionListenerFactoryKey{},
@@ -127,7 +127,7 @@ if err != nil {
 	log.Fatal("compiling wasm module:", err)
 }
 
-err = rt.PrepareModule(wasmCode, compiledModule)
+err = p.Prepare(compiledModule)
 if err != nil {
 	return fmt.Errorf("preparing wasm module: %w", err)
 }
@@ -144,17 +144,17 @@ if err != nil {
 	log.Fatal("instantiating wasm module:", err)
 }
 if err := moduleInstance.Close(ctx); err != nil {
-    log.Fatal("closing wasm module:", err)
+	log.Fatal("closing wasm module:", err)
 }
 
 cpuProfile := cpu.StopProfile(sampleRate, symbols)
 memProfile := mem.NewProfile(sampleRate, symbols)
 
 if err := wzprof.WriteProfile("cpu.pprof", cpuProfile); err != nil {
-    log.Fatal("writing CPU profile:", err)
+	log.Fatal("writing CPU profile:", err)
 }
 if err := wzprof.WriteProfile("mem.pprof", memProfile); err != nil {
-    log.Fatal("writing memory profile:", err)
+	log.Fatal("writing memory profile:", err)
 }
 ```
 

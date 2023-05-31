@@ -19,7 +19,7 @@ import (
 // - "sample" counts the number of function calls.
 // - "cpu" records the time spent in function calls (in nanoseconds).
 type CPUProfiler struct {
-	s      *Support
+	p      *Profiling
 	mutex  sync.Mutex
 	counts stackCounterMap
 	frames []cpuTimeFrame
@@ -55,17 +55,15 @@ type cpuTimeFrame struct {
 	trace stackTrace
 }
 
-// NewCPUProfiler constructs a new instance of CPUProfiler using the
-// given time function to record the CPU time consumed.
-func NewCPUProfiler(s *Support, options ...CPUProfilerOption) *CPUProfiler {
-	p := &CPUProfiler{
-		s:    s,
+func newCPUProfiler(p *Profiling, options ...CPUProfilerOption) *CPUProfiler {
+	c := &CPUProfiler{
+		p:    p,
 		time: nanotime,
 	}
 	for _, opt := range options {
-		opt(p)
+		opt(c)
 	}
-	return p
+	return c
 }
 
 // StartProfile begins recording the CPU profile. The method returns a boolean
@@ -113,7 +111,7 @@ func (p *CPUProfiler) StopProfile(sampleRate float64) *profile.Profile {
 		1,
 	}
 
-	return buildProfile(p.s, samples, start, duration, p.SampleType(), ratios)
+	return buildProfile(p.p, samples, start, duration, p.SampleType(), ratios)
 }
 
 // Name returns "profile" to match the name of the CPU profiler in pprof.
@@ -190,11 +188,11 @@ func (p *CPUProfiler) NewHandler(sampleRate float64) http.Handler {
 // NewFunctionListener returns a function listener suited to record CPU timings
 // of calls to the function passed as argument.
 func (p *CPUProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
-	skip := p.s.filteredFunctions[def.Name()]
+	skip := p.p.filteredFunctions[def.Name()]
 	if skip {
 		return nil
 	}
-	return supportedListener{p.s, cpuProfiler{p}}
+	return profilingListener{p.p, cpuProfiler{p}}
 }
 
 type cpuProfiler struct{ *CPUProfiler }
