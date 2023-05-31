@@ -22,7 +22,7 @@ import (
 type Profiling struct {
 	wasm []byte
 
-	filteredFunctions map[string]bool
+	filteredFunctions map[string]struct{}
 	symbols           symbolizer
 	stackIterator     func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
 
@@ -47,29 +47,29 @@ func ProfilingFor(wasm []byte) *Profiling {
 		// which makes it impossible to correctly walk the stack.
 		//
 		// https://github.com/golang/go/blob/7ad92e95b56019083824492fbec5bb07926d8ebd/src/cmd/internal/obj/wasm/wasmobj.go#LL907C18-L930C2
-		r.filteredFunctions = map[string]bool{
-			"_rt0_wasm_js":            true,
-			"_rt0_wasm_wasip1":        true,
-			"wasm_export_run":         true,
-			"wasm_export_resume":      true,
-			"wasm_export_getsp":       true,
-			"wasm_pc_f_loop":          true,
-			"gcWriteBarrier":          true,
-			"runtime.gcWriteBarrier1": true,
-			"runtime.gcWriteBarrier2": true,
-			"runtime.gcWriteBarrier3": true,
-			"runtime.gcWriteBarrier4": true,
-			"runtime.gcWriteBarrier5": true,
-			"runtime.gcWriteBarrier6": true,
-			"runtime.gcWriteBarrier7": true,
-			"runtime.gcWriteBarrier8": true,
-			"runtime.wasmDiv":         true,
-			"runtime.wasmTruncS":      true,
-			"runtime.wasmTruncU":      true,
-			"cmpbody":                 true,
-			"memeqbody":               true,
-			"memcmp":                  true,
-			"memchr":                  true,
+		r.filteredFunctions = map[string]struct{}{
+			"_rt0_wasm_js":            {},
+			"_rt0_wasm_wasip1":        {},
+			"wasm_export_run":         {},
+			"wasm_export_resume":      {},
+			"wasm_export_getsp":       {},
+			"wasm_pc_f_loop":          {},
+			"gcWriteBarrier":          {},
+			"runtime.gcWriteBarrier1": {},
+			"runtime.gcWriteBarrier2": {},
+			"runtime.gcWriteBarrier3": {},
+			"runtime.gcWriteBarrier4": {},
+			"runtime.gcWriteBarrier5": {},
+			"runtime.gcWriteBarrier6": {},
+			"runtime.gcWriteBarrier7": {},
+			"runtime.gcWriteBarrier8": {},
+			"runtime.wasmDiv":         {},
+			"runtime.wasmTruncS":      {},
+			"runtime.wasmTruncU":      {},
+			"cmpbody":                 {},
+			"memeqbody":               {},
+			"memcmp":                  {},
+			"memchr":                  {},
 		}
 	}
 
