@@ -1,6 +1,7 @@
 package wzprof
 
 import (
+	"context"
 	"fmt"
 	"hash/maphash"
 	"net/http"
@@ -10,30 +11,156 @@ import (
 	"unsafe"
 
 	"github.com/google/pprof/profile"
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 	"golang.org/x/exp/slices"
 )
+
+// Profiling mechanism for a given WASM binary. Entry point to generate
+// Profilers.
+type Profiling struct {
+	wasm []byte
+
+	filteredFunctions map[string]struct{}
+	symbols           symbolizer
+	stackIterator     func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
+
+	isGo bool
+}
+
+// ProfilingFor a given wasm binary. The resulting Profiling needs to be
+// prepared after Wazero module compilation.
+func ProfilingFor(wasm []byte) *Profiling {
+	r := &Profiling{
+		wasm:    wasm,
+		symbols: noopsymbolizer{},
+		stackIterator: func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
+			return wasmsi
+		},
+	}
+
+	if binCompiledByGo(wasm) {
+		r.isGo = true
+		// Those functions are special. They use a different calling
+		// convention. Their call sites do not update the stack pointer,
+		// which makes it impossible to correctly walk the stack.
+		//
+		// https://github.com/golang/go/blob/7ad92e95b56019083824492fbec5bb07926d8ebd/src/cmd/internal/obj/wasm/wasmobj.go#LL907C18-L930C2
+		r.filteredFunctions = map[string]struct{}{
+			"_rt0_wasm_js":            {},
+			"_rt0_wasm_wasip1":        {},
+			"wasm_export_run":         {},
+			"wasm_export_resume":      {},
+			"wasm_export_getsp":       {},
+			"wasm_pc_f_loop":          {},
+			"gcWriteBarrier":          {},
+			"runtime.gcWriteBarrier1": {},
+			"runtime.gcWriteBarrier2": {},
+			"runtime.gcWriteBarrier3": {},
+			"runtime.gcWriteBarrier4": {},
+			"runtime.gcWriteBarrier5": {},
+			"runtime.gcWriteBarrier6": {},
+			"runtime.gcWriteBarrier7": {},
+			"runtime.gcWriteBarrier8": {},
+			"runtime.wasmDiv":         {},
+			"runtime.wasmTruncS":      {},
+			"runtime.wasmTruncU":      {},
+			"cmpbody":                 {},
+			"memeqbody":               {},
+			"memcmp":                  {},
+			"memchr":                  {},
+		}
+	}
+
+	return r
+}
+
+// CPUProfiler constructs a new instance of CPUProfiler using the given time
+// function to record the CPU time consumed.
+func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
+	return newCPUProfiler(p, options...)
+}
+
+// MemoryProfiler constructs a new instance of MemoryProfiler using the given
+// time function to record the profile execution time.
+func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
+	return newMemoryProfiler(p, options...)
+}
+
+// Prepare selects the most appropriate analysis functions for the guest
+// code in the provided module.
+func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
+	if p.isGo {
+		s, err := preparePclntabSymbolizer(p.wasm, mod)
+		if err != nil {
+			return err
+		}
+
+		p.symbols = s
+		si := &goStackIterator{
+			pclntab:  s,
+			unwinder: unwinder{symbols: s},
+		}
+		p.stackIterator = func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator {
+			imod := mod.(experimental.InternalModule)
+			si.mem = imod.Memory()
+			si.pclntab.EnsureReady(si.mem)
+			sp0 := uint32(imod.Global(0).Get())
+			gp0 := imod.Global(2).Get()
+			pc0 := si.symbols.FIDToPC(fid(def.Index()))
+			si.initAt(ptr(pc0), ptr(sp0), 0, gptr(gp0), 0)
+			si.first = true
+			return si
+		}
+	} else {
+		p.symbols, _ = buildDwarfSymbolizer(mod) // TODO: surface error as warning?
+	}
+
+	return nil
+}
+
+// profilingListener wraps a FunctionListener to adapt its stack iterator to the
+// appropriate implementation according to the module support.
+type profilingListener struct {
+	s *Profiling
+	l experimental.FunctionListener
+}
+
+func (s profilingListener) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
+	si = s.s.stackIterator(mod, def, si)
+	s.l.Before(ctx, mod, def, params, si)
+}
+
+func (s profilingListener) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, results []uint64) {
+	s.l.After(ctx, mod, def, results)
+}
+
+func (s profilingListener) Abort(ctx context.Context, mod api.Module, def api.FunctionDefinition, err error) {
+	s.l.Abort(ctx, mod, def, err)
+}
 
 // Profiler is an interface implemented by all profiler types available in this
 // package.
 type Profiler interface {
 	experimental.FunctionListenerFactory
 
-	// Returns the name of the profiler.
+	// Name of the profiler.
 	Name() string
 
-	// Returns a human readble description of the profiler.
+	// Desc is a human-readable description of the profiler.
 	Desc() string
 
-	// Returns the number of execution stacks recorded in the profiler.
+	// Count the number of execution stacks recorded in the profiler.
 	Count() int
 
-	// Returns the set of value types present in samples recorded by the profiler.
+	// SampleType returns the set of value types present in samples recorded by
+	// the profiler.
 	SampleType() []*profile.ValueType
 
-	// Returns a new http handler suited to expose profiles on a pprof endpoint.
-	NewHandler(sampleRate float64, symbols Symbolizer) http.Handler
+	// NewHandler returns a new http handler suited to expose profiles on a
+	// pprof endpoint.
+	NewHandler(sampleRate float64) http.Handler
 }
 
 var (
@@ -54,40 +181,48 @@ func WriteProfile(path string, prof *profile.Profile) error {
 	return prof.Write(w)
 }
 
-type Symbolizer interface {
-	// LocationsForSourceOffset returns a list of function locations for a given
-	// source offset, starting from current function followed by the inlined
-	// functions, in order of inlining. Result if empty if the pc cannot be
-	// resolved in the dwarf data.
-	LocationsForSourceOffset(offset uint64) []Location
+type symbolizer interface {
+	// Locations returns a list of function locations for a given program
+	// counter, and the address it found them at. Locations start from
+	// current function followed by the inlined functions, in order of
+	// inlining. Result if empty if the pc cannot be resolved.
+	Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location)
 }
 
-type Location struct {
-	File         string
-	Line         int64
-	Column       int64
-	Inlined      bool
-	SourceOffset uint64
+type noopsymbolizer struct{}
+
+func (s noopsymbolizer) Locations(fn experimental.InternalFunction, pc experimental.ProgramCounter) (uint64, []location) {
+	return 0, nil
+}
+
+type location struct {
+	File    string
+	Line    int64
+	Column  int64
+	Inlined bool
 	// Linkage Name if present, Name otherwise.
 	// Only present for inlined functions.
 	StableName string
 	HumanName  string
 }
 
-func locationForCall(symbols Symbolizer, def api.FunctionDefinition, offset uint64, funcs map[string]*profile.Function) []profile.Line {
+func locationForCall(p *Profiling, fn experimental.InternalFunction, pc experimental.ProgramCounter, funcs map[string]*profile.Function) *profile.Location {
 	// Cache miss. Get or create function and all the line
 	// locations associated with inlining.
-	var locations []Location
+	var locations []location
 	var symbolFound bool
+	def := fn.Definition()
 
-	if symbols != nil && offset > 0 {
-		locations = symbols.LocationsForSourceOffset(offset)
+	out := &profile.Location{}
+
+	if pc > 0 {
+		out.Address, locations = p.symbols.Locations(fn, pc)
 		symbolFound = len(locations) > 0
 	}
 	if len(locations) == 0 {
 		// If we don't have a source location, attach to a
 		// generic location within the function.
-		locations = []Location{{}}
+		locations = []location{{}}
 	}
 	// Provide defaults in case we couldn't resolve DWARF information for
 	// the main function call's PC.
@@ -129,7 +264,8 @@ func locationForCall(symbols Symbolizer, def api.FunctionDefinition, offset uint
 		}
 	}
 
-	return lines
+	out.Line = lines
+	return out
 }
 
 type locationKey struct {
@@ -218,6 +354,7 @@ type stackTrace struct {
 func makeStackTrace(st stackTrace, si experimental.StackIterator) stackTrace {
 	st.fns = st.fns[:0]
 	st.pcs = st.pcs[:0]
+
 	for si.Next() {
 		st.fns = append(st.fns, si.Function())
 		st.pcs = append(st.pcs, si.ProgramCounter())
@@ -271,7 +408,7 @@ type sampleType interface {
 	sampleValue() []int64
 }
 
-func buildProfile[T sampleType](symbols Symbolizer, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType, ratios []float64) *profile.Profile {
+func buildProfile[T sampleType](p *Profiling, samples map[uint64]T, start time.Time, duration time.Duration, sampleType []*profile.ValueType, ratios []float64) *profile.Profile {
 	prof := &profile.Profile{
 		SampleType:    sampleType,
 		Sample:        make([]*profile.Sample, 0, len(samples)),
@@ -295,12 +432,8 @@ func buildProfile[T sampleType](symbols Symbolizer, samples map[uint64]T, start 
 			key := makeLocationKey(def, pc)
 			loc := locationCache[key]
 			if loc == nil {
-				off := fn.SourceOffsetForPC(pc)
-				loc = &profile.Location{
-					ID:      locationID,
-					Line:    locationForCall(symbols, def, off, functionCache),
-					Address: off,
-				}
+				loc = locationForCall(p, fn, pc, functionCache)
+				loc.ID = locationID
 				locationID++
 				locationCache[key] = loc
 			}

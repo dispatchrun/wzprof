@@ -54,11 +54,13 @@ func (prog *program) run(ctx context.Context) error {
 	wasmName := filepath.Base(prog.filePath)
 	wasmCode, err := os.ReadFile(prog.filePath)
 	if err != nil {
-		return fmt.Errorf("loading wasm module: %w", err)
+		return fmt.Errorf("reading wasm module: %w", err)
 	}
 
-	cpu := wzprof.NewCPUProfiler(wzprof.HostTime(prog.hostTime))
-	mem := wzprof.NewMemoryProfiler(wzprof.InuseMemory(prog.inuseMemory))
+	p := wzprof.ProfilingFor(wasmCode)
+
+	cpu := p.CPUProfiler(wzprof.HostTime(prog.hostTime))
+	mem := p.MemoryProfiler(wzprof.InuseMemory(prog.inuseMemory))
 
 	var listeners []experimental.FunctionListenerFactory
 	if prog.cpuProfile != "" || prog.pprofAddr != "" {
@@ -90,12 +92,9 @@ func (prog *program) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("compiling wasm module: %w", err)
 	}
-
-	stdout.Printf("building dwarf symbolizer from compiled wasm module")
-	symbols, err := wzprof.BuildDwarfSymbolizer(compiledModule)
+	err = p.Prepare(compiledModule)
 	if err != nil {
-		symbols = nil
-		log.Println("warning: symbolizing wasm module:", err)
+		return fmt.Errorf("preparing wasm module: %w", err)
 	}
 
 	if prog.pprofAddr != "" {
@@ -103,7 +102,7 @@ func (prog *program) run(ctx context.Context) error {
 		stdout.Printf("starting prrof http sever at %s", u)
 
 		server := http.NewServeMux()
-		server.Handle("/debug/pprof/", wzprof.Handler(prog.sampleRate, symbols, cpu, mem))
+		server.Handle("/debug/pprof/", wzprof.Handler(prog.sampleRate, cpu, mem))
 
 		go func() {
 			if err := http.ListenAndServe(prog.pprofAddr, server); err != nil {
@@ -134,7 +133,7 @@ func (prog *program) run(ctx context.Context) error {
 	if prog.cpuProfile != "" {
 		cpu.StartProfile()
 		defer func() {
-			p := cpu.StopProfile(prog.sampleRate, symbols)
+			p := cpu.StopProfile(prog.sampleRate)
 			if !prog.hostProfile {
 				writeProfile("cpu", wasmName, prog.cpuProfile, p)
 			}
@@ -143,7 +142,7 @@ func (prog *program) run(ctx context.Context) error {
 
 	if prog.memProfile != "" {
 		defer func() {
-			p := mem.NewProfile(prog.sampleRate, symbols)
+			p := mem.NewProfile(prog.sampleRate)
 			if !prog.hostProfile {
 				writeProfile("memory", wasmName, prog.memProfile, p)
 			}

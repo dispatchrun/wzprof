@@ -25,6 +25,7 @@ import (
 // the program, while "inuse_objects" and "inuse_space" capture the current state
 // of the program at the time the profile is taken.
 type MemoryProfiler struct {
+	p     *Profiling
 	mutex sync.Mutex
 	alloc stackCounterMap
 	inuse map[uint32]memoryAllocation
@@ -51,24 +52,25 @@ type memoryAllocation struct {
 	size uint32
 }
 
-// NewMemoryProfiler constructs a new instance of MemoryProfiler using the given
+// newMemoryProfiler constructs a new instance of MemoryProfiler using the given
 // time function to record the profile execution time.
-func NewMemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
-	p := &MemoryProfiler{
+func newMemoryProfiler(p *Profiling, options ...MemoryProfilerOption) *MemoryProfiler {
+	m := &MemoryProfiler{
+		p:     p,
 		alloc: make(stackCounterMap),
 		start: time.Now(),
 	}
 	for _, opt := range options {
-		opt(p)
+		opt(m)
 	}
-	return p
+	return m
 }
 
 // NewProfile takes a snapshot of the current memory allocation state and builds
 // a profile representing the state of the program memory.
-func (p *MemoryProfiler) NewProfile(sampleRate float64, symbols Symbolizer) *profile.Profile {
+func (p *MemoryProfiler) NewProfile(sampleRate float64) *profile.Profile {
 	ratio := 1 / sampleRate
-	return buildProfile(symbols, p.snapshot(), p.start, time.Since(p.start), p.SampleType(),
+	return buildProfile(p.p, p.snapshot(), p.start, time.Since(p.start), p.SampleType(),
 		[]float64{ratio, ratio, ratio, ratio},
 	)
 }
@@ -163,37 +165,37 @@ func (p *MemoryProfiler) snapshot() map[uint64]*memorySample {
 //
 // The symbolizer passed as argument is used to resolve names of program
 // locations recorded in the profile.
-func (p *MemoryProfiler) NewHandler(sampleRate float64, symbols Symbolizer) http.Handler {
+func (p *MemoryProfiler) NewHandler(sampleRate float64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serveProfile(w, p.NewProfile(sampleRate, symbols))
+		serveProfile(w, p.NewProfile(sampleRate))
 	})
 }
 
 // NewFunctionListener returns a function listener suited to install a hook on
 // functions responsible for memory allocation.
 //
-// The listener recognizes multiple memory alloction functions used by compilers
-// and libraries. It uses the function name to detect memory allocators,
-// currently supporting libc, Go, and TinyGo.
+// The listener recognizes multiple memory allocation functions used by
+// compilers and libraries. It uses the function name to detect memory
+// allocators, currently supporting libc, Go, and TinyGo.
 func (p *MemoryProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
 	switch def.Name() {
 	// C standard library, Rust
 	case "malloc":
-		return &mallocProfiler{memory: p}
+		return profilingListener{p.p, &mallocProfiler{memory: p}}
 	case "calloc":
-		return &callocProfiler{memory: p}
+		return profilingListener{p.p, &callocProfiler{memory: p}}
 	case "realloc":
-		return &reallocProfiler{memory: p}
+		return profilingListener{p.p, &reallocProfiler{memory: p}}
 	case "free":
-		return &freeProfiler{memory: p}
+		return profilingListener{p.p, &freeProfiler{memory: p}}
 
 	// Go
 	case "runtime.mallocgc":
-		return &goRuntimeMallocgcProfiler{memory: p}
+		return profilingListener{p.p, &goRuntimeMallocgcProfiler{memory: p}}
 
 	// TinyGo
 	case "runtime.alloc":
-		return &mallocProfiler{memory: p}
+		return profilingListener{p.p, &mallocProfiler{memory: p}}
 
 	default:
 		return nil
@@ -300,16 +302,16 @@ type goRuntimeMallocgcProfiler struct {
 	stack  stackTrace
 }
 
-func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, si experimental.StackIterator) {
+func (p *goRuntimeMallocgcProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, params []uint64, wasmsi experimental.StackIterator) {
 	imod := mod.(experimental.InternalModule)
 	mem := imod.Memory()
 
-	sp := int32(imod.Global(0).Get())
-	offset := sp + 8*(int32(0)+1) // +1 for the return address
-	b, ok := mem.Read(uint32(offset), 8)
+	sp := uint32(imod.Global(0).Get())
+	offset := sp + 8*(uint32(0)+1) // +1 for the return address
+	b, ok := mem.Read(offset, 8)
 	if ok {
 		p.size = binary.LittleEndian.Uint32(b)
-		p.stack = makeStackTrace(p.stack, si)
+		p.stack = makeStackTrace(p.stack, wasmsi)
 	} else {
 		p.size = 0
 	}
