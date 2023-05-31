@@ -9,7 +9,12 @@ builds:
   - main: ./cmd/wzprof/main.go
     binary: wzprof
     mod_timestamp: '{{ .CommitTimestamp }}'
-
+    goarch:
+      - amd64
+      - arm64
+    goos:
+      - linux
+      - darwin
     ldflags:
       - -X main.version={{.Version}} 
 
