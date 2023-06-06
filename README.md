@@ -26,7 +26,7 @@ compilation.
 some of the simplest and quickest ways to gather insight into the performance
 of an application.
 
-`wzprof` aims the combine the capabilities and user experience of `pprof`
+`wzprof` aims to combine the capabilities and user experience of `pprof`
 with a [**wazero.Runtime**](https://pkg.go.dev/github.com/tetratelabs/wazero#Runtime),
 enabling the profiling of any application compiled to WebAssembly.
 
