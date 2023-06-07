@@ -7,7 +7,6 @@ linters:
   enable:
     - depguard
     - godot
-    - gofumpt
     - goimports
     - revive
     - whitespace
@@ -26,8 +25,6 @@ linters-settings:
   errcheck:
   goimports:
     local-prefixes: github.com/stealthrocket/wzprof
-  gofumpt:
-    extra-rules: false
   misspell:
     locale: US
   revive:
