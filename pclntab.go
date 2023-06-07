@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"runtime"
 	"unsafe"
 
 	"github.com/tetratelabs/wazero"
@@ -163,9 +162,6 @@ func findStartOfModuleData(b, start, cutabaddr, filetabaddr []byte) int {
 type fid int
 
 func preparePclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclntab, error) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		return nil, fmt.Errorf("pclntab only supported on linux and darwin")
-	}
 	data := wasmdataSection(wasmbin)
 	if data == nil {
 		return nil, fmt.Errorf("no data section in the wasm binary")
