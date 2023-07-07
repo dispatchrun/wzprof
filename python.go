@@ -362,7 +362,7 @@ func pysvarint(m vmem, p ptr32) int32 {
 
 	x := int32(val >> 1)
 	if val&1 > 0 {
-		x = ^x
+		x = -x
 	}
 	return x
 }
