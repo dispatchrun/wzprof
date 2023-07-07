@@ -22,6 +22,7 @@ import (
 type Profiling struct {
 	wasm []byte
 
+	onlyFunctions     map[string]struct{}
 	filteredFunctions map[string]struct{}
 	symbols           symbolizer
 	stackIterator     func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
@@ -73,6 +74,13 @@ func ProfilingFor(wasm []byte) *Profiling {
 		}
 	}
 
+	// FIXME: detect python here
+	r.onlyFunctions = map[string]struct{}{
+		// TODO: find the right functions to hook into
+		// "_PyEval_EvalFrameDefault":     {},
+		"_PyEvalFramePushAndInit": {},
+	}
+
 	return r
 }
 
@@ -109,13 +117,29 @@ func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
 			sp0 := uint32(imod.Global(0).Get())
 			gp0 := imod.Global(2).Get()
 			pc0 := si.symbols.FIDToPC(fid(def.Index()))
-			si.initAt(ptr(pc0), ptr(sp0), 0, gptr(gp0), 0)
+			si.initAt(ptr64(pc0), ptr64(sp0), 0, gptr(gp0), 0)
 			si.first = true
 			return si
 		}
-	} else {
-		p.symbols, _ = buildDwarfSymbolizer(mod) // TODO: surface error as warning?
+		return nil
 	}
+
+	dwarf, err := newDwarfparser(mod)
+	if err != nil {
+		return nil // TODO: surface error as warning?
+	}
+
+	if guessPython(dwarf) {
+		py, err := preparePython(dwarf)
+		if err != nil {
+			return err
+		}
+		p.symbols = py
+		p.stackIterator = py.Stackiter
+		return nil
+	}
+
+	p.symbols = buildDwarfSymbolizer(dwarf)
 
 	return nil
 }

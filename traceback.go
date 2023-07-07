@@ -70,11 +70,11 @@ type stkframe struct {
 	//   instruction in a function. Conventionally, we use pc-1
 	//   for symbolic information, unless pc == fn.entry(), in
 	//   which case we use pc.
-	pc   ptr
-	lr   ptr // program counter at caller aka link register
-	sp   ptr // stack pointer at pc
-	fp   ptr // stack pointer at caller aka frame pointer
-	varp ptr // top of local variables
+	pc   ptr64
+	lr   ptr64 // program counter at caller aka link register
+	sp   ptr64 // stack pointer at pc
+	fp   ptr64 // stack pointer at caller aka frame pointer
+	varp ptr64 // top of local variables
 }
 
 // unwindFlags control the behavior of various unwinders.
@@ -155,8 +155,8 @@ const (
 	sysPCQuantum  = 1 // https://github.com/golang/go/blob/49ad23a6d23d6cc1666c22e4bc215f25f717b569/src/internal/goarch/goarch_wasm.go
 )
 
-func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
-	if pc0 == ptr(^uint64(0)) && sp0 == ptr(^uint64(0)) {
+func (u *unwinder) initAt(pc0, sp0, lr0 ptr64, gp gptr, flags unwindFlags) {
+	if pc0 == ptr64(^uint64(0)) && sp0 == ptr64(^uint64(0)) {
 		panic("should have been initialized")
 	}
 
@@ -167,7 +167,7 @@ func (u *unwinder) initAt(pc0, sp0, lr0 ptr, gp gptr, flags unwindFlags) {
 	// If the PC is zero, it's likely a nil function call.
 	// Start in the caller's frame.
 	if frame.pc == 0 {
-		frame.pc = deref[ptr](u.mem, frame.sp)
+		frame.pc = deref[ptr64](u.mem, frame.sp)
 		frame.sp += goarchPtrSize
 	}
 
@@ -234,7 +234,7 @@ func (u *unwinder) resolveInternal(innermost bool) {
 		// We also defensively check that this won't switch M's on us,
 		// which could happen at critical points in the scheduler.
 		// This ensures gp.m doesn't change from a stack jump.
-		if u.flags&unwindJumpStack != 0 && gp == gMG0(u.mem, gp) && gMCurg(u.mem, gp) != 0 && ptr(gMCurg(u.mem, gp)) == gM(u.mem, gp) {
+		if u.flags&unwindJumpStack != 0 && gp == gMG0(u.mem, gp) && gMCurg(u.mem, gp) != 0 && ptr64(gMCurg(u.mem, gp)) == gM(u.mem, gp) {
 			switch f.FuncID {
 			case goruntime.FuncID_morestack:
 				// morestack does not return normally -- newstack()
@@ -259,7 +259,7 @@ func (u *unwinder) resolveInternal(innermost bool) {
 				flag &^= goruntime.FuncFlagSPWrite
 			}
 		}
-		frame.fp = frame.sp + ptr(funcspdelta(f, frame.pc))
+		frame.fp = frame.sp + ptr64(funcspdelta(f, frame.pc))
 		frame.fp += goarchPtrSize
 	}
 
@@ -291,10 +291,10 @@ func (u *unwinder) resolveInternal(innermost bool) {
 			}
 		}
 	} else {
-		var lrPtr ptr
+		var lrPtr ptr64
 		if frame.lr == 0 {
 			lrPtr = frame.fp - goarchPtrSize
-			frame.lr = deref[ptr](u.mem, lrPtr)
+			frame.lr = deref[ptr64](u.mem, lrPtr)
 		}
 	}
 
@@ -350,13 +350,13 @@ func (u *unwinder) finishInternal() {
 	u.frame.pc = 0
 }
 
-func funcspdelta(f funcInfo, targetpc ptr) int32 {
+func funcspdelta(f funcInfo, targetpc ptr64) int32 {
 	x, _ := pcvalue(f, f.Pcsp, targetpc)
 	return x
 }
 
 // Returns the PCData value, and the PC where this value starts.
-func pcvalue(f funcInfo, off uint32, targetpc ptr) (int32, ptr) {
+func pcvalue(f funcInfo, off uint32, targetpc ptr64) (int32, ptr64) {
 	if off == 0 {
 		return -1, 0
 	}
@@ -402,7 +402,7 @@ func pcvalue(f funcInfo, off uint32, targetpc ptr) (int32, ptr) {
 }
 
 // step advances to the next pc, value pair in the encoded table.
-func step(p []byte, pc *ptr, val *int32, first bool) (newp []byte, ok bool) {
+func step(p []byte, pc *ptr64, val *int32, first bool) (newp []byte, ok bool) {
 	// For both uvdelta and pcdelta, the common case (~70%)
 	// is that they are a single byte. If so, avoid calling readvarint.
 	uvdelta := uint32(p[0])
@@ -422,7 +422,7 @@ func step(p []byte, pc *ptr, val *int32, first bool) (newp []byte, ok bool) {
 		n, pcdelta = readvarint(p)
 	}
 	p = p[n:]
-	*pc += ptr(pcdelta * sysPCQuantum)
+	*pc += ptr64(pcdelta * sysPCQuantum)
 	return p, true
 }
 
@@ -454,7 +454,7 @@ type inlineUnwinder struct {
 	symbols *pclntab
 	mem     vmem
 	f       funcInfo
-	inlTree ptr // Address of the array of inlinedCall entries
+	inlTree ptr64 // Address of the array of inlinedCall entries
 }
 
 // next returns the frame representing uf's logical caller.
@@ -464,7 +464,7 @@ func (u *inlineUnwinder) next(uf inlineFrame) inlineFrame {
 		return uf
 	}
 	c := derefArrayIndex[inlinedCall](u.mem, u.inlTree, uf.index)
-	return u.resolveInternal(u.f.entry() + ptr(c.parentPc))
+	return u.resolveInternal(u.f.entry() + ptr64(c.parentPc))
 }
 
 // srcFunc returns the srcFunc representing the given frame.
@@ -481,7 +481,7 @@ func (u *inlineUnwinder) srcFunc(uf inlineFrame) srcFunc {
 	}
 }
 
-func (u *inlineUnwinder) resolveInternal(pc ptr) inlineFrame {
+func (u *inlineUnwinder) resolveInternal(pc ptr64) inlineFrame {
 	return inlineFrame{
 		pc: pc,
 		// Conveniently, this returns -1 if there's an error, which is the same
@@ -495,7 +495,7 @@ type inlineFrame struct {
 	// pc is the PC giving the file/line metadata of the current frame. This is
 	// always a "call PC" (not a "return PC"). This is 0 when the iterator is
 	// exhausted.
-	pc ptr
+	pc ptr64
 
 	// index is the index of the current record in inlTree, or -1 if we are in
 	// the outermost function.
@@ -506,7 +506,7 @@ func (uf inlineFrame) valid() bool {
 	return uf.pc != 0
 }
 
-func newInlineUnwinder(symbols *pclntab, mem vmem, f funcInfo, pc ptr) (inlineUnwinder, inlineFrame) {
+func newInlineUnwinder(symbols *pclntab, mem vmem, f funcInfo, pc ptr64) (inlineUnwinder, inlineFrame) {
 	inldataAddr := funcdata(symbols, f, goruntime.FUNCDATA_InlTree)
 	if inldataAddr == 0 {
 		return inlineUnwinder{symbols: symbols, mem: mem, f: f}, inlineFrame{pc: pc, index: -1}
@@ -517,7 +517,7 @@ func newInlineUnwinder(symbols *pclntab, mem vmem, f funcInfo, pc ptr) (inlineUn
 
 // funcdata returns a pointer to the ith funcdata for f.
 // funcdata should be kept in sync with cmd/link:writeFuncs.
-func funcdata(symbols *pclntab, f funcInfo, i uint8) ptr {
+func funcdata(symbols *pclntab, f funcInfo, i uint8) ptr64 {
 	if i >= f.Nfuncdata {
 		return 0
 	}
@@ -526,11 +526,11 @@ func funcdata(symbols *pclntab, f funcInfo, i uint8) ptr {
 
 	// Return off == ^uint32(0) ? 0 : f.datap.gofunc + uintptr(off), but without branches.
 	// The compiler calculates mask on most architectures using conditional assignment.
-	var mask ptr
+	var mask ptr64
 	if off == ^uint32(0) {
 		mask = 1
 	}
 	mask--
-	raw := base + ptr(off)
+	raw := base + ptr64(off)
 	return raw & mask
 }

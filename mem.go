@@ -178,6 +178,7 @@ func (p *MemoryProfiler) NewHandler(sampleRate float64) http.Handler {
 // compilers and libraries. It uses the function name to detect memory
 // allocators, currently supporting libc, Go, and TinyGo.
 func (p *MemoryProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
+	return nil // TODO
 	switch def.Name() {
 	// C standard library, Rust
 	case "malloc":

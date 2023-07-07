@@ -11,14 +11,13 @@ import (
 	"sync"
 
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 )
 
 // buildDwarfSymbolizer constructs a Symbolizer instance from the DWARF sections
 // of the given WebAssembly module.
-func buildDwarfSymbolizer(module wazero.CompiledModule) (symbolizer, error) {
-	return newDwarfmapper(module.CustomSections())
+func buildDwarfSymbolizer(parser dwarfparser) symbolizer {
+	return newDwarfmapper(parser)
 }
 
 type sourceOffsetRange = [2]uint64
@@ -42,9 +41,10 @@ type dwarfmapper struct {
 	onceSourceOffsetNotFound sync.Once
 }
 
-func newDwarfmapper(sections []api.CustomSection) (*dwarfmapper, error) {
-	var info, line, ranges, str, abbrev []byte
+func newDwarfparser(module wazero.CompiledModule) (dwarfparser, error) {
+	sections := module.CustomSections()
 
+	var info, line, ranges, str, abbrev []byte
 	for _, section := range sections {
 		log.Printf("dwarf: found section %s", section.Name())
 		switch section.Name() {
@@ -63,21 +63,22 @@ func newDwarfmapper(sections []api.CustomSection) (*dwarfmapper, error) {
 
 	d, err := dwarf.New(abbrev, nil, nil, info, line, nil, ranges, str)
 	if err != nil {
-		return nil, fmt.Errorf("dwarf: %w", err)
+		return dwarfparser{}, fmt.Errorf("dwarf: %w", err)
 	}
 
 	r := d.Reader()
 
-	p := dwarfparser{d: d, r: r}
+	return dwarfparser{d: d, r: r}, nil
+}
+
+func newDwarfmapper(p dwarfparser) *dwarfmapper {
 	subprograms := p.Parse()
 	log.Printf("dwarf: parsed %d subprogramm ranges", len(subprograms))
 
-	dm := &dwarfmapper{
-		d:           d,
+	return &dwarfmapper{
+		d:           p.d,
 		subprograms: subprograms,
 	}
-
-	return dm, nil
 }
 
 type dwarfparser struct {
