@@ -77,8 +77,9 @@ func ProfilingFor(wasm []byte) *Profiling {
 	// FIXME: detect python here
 	r.onlyFunctions = map[string]struct{}{
 		// TODO: find the right functions to hook into
-		// "_PyEval_EvalFrameDefault":     {},
-		"_PyEvalFramePushAndInit": {},
+		// "_PyEval_EvalFrameDefault": {},
+		// "_PyEvalFramePushAndInit": {},
+		"PyObject_Vectorcall": {},
 	}
 
 	return r
