@@ -4,6 +4,8 @@ import (
 	"debug/dwarf"
 	"encoding/binary"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"unsafe"
 
 	"github.com/tetratelabs/wazero/api"
@@ -184,12 +186,31 @@ func (p *pystackiter) ProgramCounter() experimental.ProgramCounter {
 
 func (p *pystackiter) Function() experimental.InternalFunction {
 	codep := deref[ptr32](p.mem, p.framep+padCodeInFrame)
+	line, _ := lineForFrame(p.mem, p.framep, codep)
+	file := derefPyUnicodeUtf8(p.mem, codep+padFilenameInCodeObject)
+	name := derefPyUnicodeUtf8(p.mem, codep+padNameInCodeObject)
 	return pyfuncall{
-		file: derefPyUnicodeUtf8(p.mem, codep+padFilenameInCodeObject),
-		name: derefPyUnicodeUtf8(p.mem, codep+padNameInCodeObject),
+		file: file,
+		name: functionName(file, name),
 		addr: deref[uint32](p.mem, p.framep+padPrevInstrInFrame),
-		line: lineForFrame(p.mem, p.framep, codep),
+		line: line,
 	}
+}
+
+func functionName(path, function string) string {
+	mod := ""
+	const frozenPrefix = "<frozen "
+	if strings.HasPrefix(path, frozenPrefix) {
+		mod = path[len(frozenPrefix) : len(path)-1]
+	} else {
+		file := filepath.Base(path)
+		mod = file[:len(file)-len(filepath.Ext(file))]
+	}
+
+	if function == "<module>" {
+		return mod
+	}
+	return mod + "." + function
 }
 
 func (p *pystackiter) Parameters() []uint64 {
@@ -281,13 +302,13 @@ func derefPyUnicodeUtf8(m vmem, p ptr32) string {
 	return pyUnicodeUTf8(m, x)
 }
 
-func lineForFrame(m vmem, framep, codep ptr32) int32 {
+func lineForFrame(m vmem, framep, codep ptr32) (int32, bool) {
 	codestart := codep + padCodeAdaptiveInCodeObject
 	previnstr := deref[ptr32](m, framep+padPrevInstrInFrame)
 	firstlineno := deref[int32](m, codep+padFirstlinenoInCodeObject)
 
 	if previnstr < codestart {
-		return firstlineno
+		return firstlineno, false
 	}
 
 	linearray := deref[ptr32](m, codep+padLinearrayInCodeObject)
@@ -343,7 +364,7 @@ func lineForFrame(m vmem, framep, codep ptr32) int32 {
 		}
 	}
 
-	return ar_line
+	return ar_line, true
 }
 
 // Python-specific implementation of protobuf signed varints. However
