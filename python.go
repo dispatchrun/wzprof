@@ -8,55 +8,71 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 )
 
-// Heuristic to guess whether the wasm binary is actually CPython, based on its
-// DWARF information.
-//
-// It loops over compile units to find one named "Programs/python.c". It should
-// be fast since it's the first compile unit when we build CPython.
-func guessPython(p dwarfparser) bool {
+const (
+	runtimeAddrName = "_PyRuntime"
+	versionAddrName = "Py_Version"
+)
+
+func supportedPython(wasmbin []byte) bool {
+	p, err := newDwarfParserFromBin(wasmbin)
+	if err != nil {
+		return false
+	}
+
+	versionAddr := pythonAddress(p, versionAddrName)
+	if versionAddr == 0 {
+		return false
+	}
+
+	data := wasmdataSection(wasmbin)
+	if data == nil {
+		return false
+	}
+
+	var versionhex uint32
+	d := newDataIterator(data)
 	for {
-		ent, err := p.r.Next()
-		if err != nil || ent == nil {
+		vaddr, seg := d.Next()
+		if seg == nil || vaddr > int64(versionAddr) {
 			break
 		}
-		if ent.Tag != dwarf.TagCompileUnit {
-			p.r.SkipChildren()
+
+		end := vaddr + int64(len(seg))
+		if int64(versionAddr)+4 >= end {
 			continue
 		}
-		name, _ := ent.Val(dwarf.AttrName).(string)
-		if name == "Programs/python.c" {
-			return true
-		}
-		p.r.SkipChildren()
+
+		offset := int64(versionAddr) - vaddr
+		versionhex = binary.LittleEndian.Uint32(seg[offset:])
+		break
 	}
-	return false
+
+	// see cpython patchlevel.h
+	major := (versionhex >> 24) & 0xFF
+	minor := (versionhex >> 16) & 0xFF
+	return major == 3 && minor == 11
 }
 
-type python struct {
-	dwarf    dwarfparser
-	pyrtaddr ptr32
-
-	counter uint64
-}
-
-func preparePython(dwarf dwarfparser) (*python, error) {
-	pyrtaddr := findPyRuntime(dwarf)
-	if pyrtaddr == 0 {
-		return nil, fmt.Errorf("could not find _PyRuntime address")
+func preparePython(mod wazero.CompiledModule) (*python, error) {
+	p, err := newDwarfparser(mod)
+	if err != nil {
+		return nil, fmt.Errorf("could not build dwarf parser: %w", err)
+	}
+	runtimeAddr := pythonAddress(p, runtimeAddrName)
+	if runtimeAddr == 0 {
+		return nil, fmt.Errorf("could not find python runtime address")
 	}
 	return &python{
-		dwarf:    dwarf,
-		pyrtaddr: ptr32(pyrtaddr),
+		pyrtaddr: ptr32(runtimeAddr),
 	}, nil
 }
 
-// Find the address of the _PyRuntime symbol from the dwarf information.
-// Returns 0 if not found.
-func findPyRuntime(p dwarfparser) uint32 {
+func pythonAddress(p dwarfparser, name string) uint32 {
 	for {
 		ent, err := p.r.Next()
 		if err != nil || ent == nil {
@@ -65,25 +81,34 @@ func findPyRuntime(p dwarfparser) uint32 {
 		if ent.Tag != dwarf.TagVariable {
 			continue
 		}
-		name, _ := ent.Val(dwarf.AttrName).(string)
-		if name != "_PyRuntime" {
+		n, _ := ent.Val(dwarf.AttrName).(string)
+		if n != name {
 			continue
 		}
-		f := ent.AttrField(dwarf.AttrLocation)
-		if f == nil {
-			panic("_PyRuntime does not have a location")
-		}
-		if f.Class != dwarf.ClassExprLoc {
-			panic(fmt.Errorf("invalid location class: %s", f.Class))
-		}
-		const DW_OP_addr = 0x3
-		loc := f.Val.([]byte)
-		if len(loc) == 0 || loc[0] != DW_OP_addr {
-			panic(fmt.Errorf("unexpected address format: %X", loc))
-		}
-		return binary.LittleEndian.Uint32(loc[1:])
+		return getDwarfLocationAddress(ent)
 	}
 	return 0
+}
+
+type python struct {
+	pyrtaddr ptr32
+	counter  uint64
+}
+
+func getDwarfLocationAddress(ent *dwarf.Entry) uint32 {
+	f := ent.AttrField(dwarf.AttrLocation)
+	if f == nil {
+		return 0
+	}
+	if f.Class != dwarf.ClassExprLoc {
+		panic(fmt.Errorf("invalid location class: %s", f.Class))
+	}
+	const DW_OP_addr = 0x3
+	loc := f.Val.([]byte)
+	if len(loc) == 0 || loc[0] != DW_OP_addr {
+		panic(fmt.Errorf("unexpected address format: %X", loc))
+	}
+	return binary.LittleEndian.Uint32(loc[1:])
 }
 
 // Padding of fields in various CPython structs. They are calculated

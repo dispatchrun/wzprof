@@ -41,6 +41,14 @@ type dwarfmapper struct {
 	onceSourceOffsetNotFound sync.Once
 }
 
+const (
+	debugInfo   = ".debug_info"
+	debugLine   = ".debug_line"
+	debugStr    = ".debug_str"
+	debugAbbrev = ".debug_abbrev"
+	debugRanges = ".debug_ranges"
+)
+
 func newDwarfparser(module wazero.CompiledModule) (dwarfparser, error) {
 	sections := module.CustomSections()
 
@@ -48,15 +56,15 @@ func newDwarfparser(module wazero.CompiledModule) (dwarfparser, error) {
 	for _, section := range sections {
 		log.Printf("dwarf: found section %s", section.Name())
 		switch section.Name() {
-		case ".debug_info":
+		case debugInfo:
 			info = section.Data()
-		case ".debug_line":
+		case debugLine:
 			line = section.Data()
-		case ".debug_str":
+		case debugStr:
 			str = section.Data()
-		case ".debug_abbrev":
+		case debugAbbrev:
 			abbrev = section.Data()
-		case ".debug_ranges":
+		case debugRanges:
 			ranges = section.Data()
 		}
 	}
@@ -67,7 +75,22 @@ func newDwarfparser(module wazero.CompiledModule) (dwarfparser, error) {
 	}
 
 	r := d.Reader()
+	return dwarfparser{d: d, r: r}, nil
+}
 
+func newDwarfParserFromBin(wasmbin []byte) (dwarfparser, error) {
+	info := wasmCustomSection(wasmbin, debugInfo)
+	line := wasmCustomSection(wasmbin, debugLine)
+	ranges := wasmCustomSection(wasmbin, debugRanges)
+	str := wasmCustomSection(wasmbin, debugStr)
+	abbrev := wasmCustomSection(wasmbin, debugAbbrev)
+
+	d, err := dwarf.New(abbrev, nil, nil, info, line, nil, ranges, str)
+	if err != nil {
+		return dwarfparser{}, fmt.Errorf("dwarf: %w", err)
+	}
+
+	r := d.Reader()
 	return dwarfparser{d: d, r: r}, nil
 }
 
