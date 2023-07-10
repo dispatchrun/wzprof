@@ -204,10 +204,7 @@ func (p *CPUProfiler) NewFunctionListener(def api.FunctionDefinition) experiment
 
 type cpuProfiler struct{ *CPUProfiler }
 
-var mydepth = 0
-
 func (p cpuProfiler) Before(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ []uint64, si experimental.StackIterator) {
-	mydepth++
 	var frame cpuTimeFrame
 	p.mutex.Lock()
 
@@ -232,7 +229,6 @@ func (p cpuProfiler) Before(ctx context.Context, mod api.Module, def api.Functio
 }
 
 func (p cpuProfiler) After(ctx context.Context, mod api.Module, def api.FunctionDefinition, _ []uint64) {
-	mydepth--
 	i := len(p.frames) - 1
 	f := p.frames[i]
 	p.frames = p.frames[:i]

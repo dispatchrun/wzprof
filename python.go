@@ -118,18 +118,18 @@ func getDwarfLocationAddress(ent *dwarf.Entry) uint32 {
 // TODO: look into using CGO and #import<Python.h> to generate them
 // instead.
 const (
-	// _PyRuntimeState
+	// _PyRuntimeState.
 	padTstateCurrentInRT = 360
-	// PyThreadState
+	// PyThreadState.
 	padCframeInThreadState = 40
-	// _PyCFrame
+	// _PyCFrame.
 	padCurrentFrameInCFrame = 4
-	// _PyInterpreterFrame
+	// _PyInterpreterFrame.
 	padPreviousInFrame  = 24
 	padCodeInFrame      = 16
 	padPrevInstrInFrame = 28
 	padOwnerInFrame     = 37
-	// PyCodeObject
+	// PyCodeObject.
 	padFilenameInCodeObject       = 80
 	padNameInCodeObject           = 84
 	padCodeAdaptiveInCodeObject   = 116
@@ -138,14 +138,14 @@ const (
 	padLinetableInCodeObject      = 92
 	padFirstTraceableInCodeObject = 108
 	sizeCodeUnit                  = 2
-	// PyASCIIObject
+	// PyASCIIObject.
 	padStateInAsciiObject  = 16
 	padLengthInAsciiObject = 8
 	sizeAsciiObject        = 24
-	// PyBytesObject
+	// PyBytesObject.
 	padSvalInBytesObject = 16
 	padSizeInBytesObject = 8
-	// Enum constants
+	// Enum constants.
 	enumCodeLocation1         = 11
 	enumCodeLocation2         = 12
 	enumCodeLocationNoCol     = 13
