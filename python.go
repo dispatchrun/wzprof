@@ -226,6 +226,9 @@ func functionName(path, function string) string {
 	if strings.HasPrefix(path, frozenPrefix) {
 		mod = path[len(frozenPrefix) : len(path)-1]
 	} else {
+		if strings.HasSuffix(path, "__init__.py") {
+			path = filepath.Dir(path)
+		}
 		file := filepath.Base(path)
 		mod = file[:len(file)-len(filepath.Ext(file))]
 	}
