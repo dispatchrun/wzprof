@@ -18,15 +18,17 @@ testdata.files = \
 	$(testdata.tinygo.wasm) \
 	$(testdata.wat.wasm)
 
+python.files = .python/python.wasm .python/python311.zip
+
 all: test
 
 clean:
-	rm -f $(testdata.files)
+	rm -f $(testdata.files) $(python.files)
 
 test: testdata
 	go test ./...
 
-testdata: wasi-libc $(testdata.files)
+testdata: wasi-libc python $(testdata.files)
 
 testdata/.sysroot:
 	mkdir -p testdata/.sysroot
@@ -53,6 +55,16 @@ testdata/wat/%.wasm: testdata/wat/%.wat
 	wat2wasm -o $@ $<
 
 wasi-libc: testdata/.sysroot/lib/wasm32-wasi/libc.a
+
+python: $(python.files)
+
+.python/python.wasm:
+	mkdir -p $(dir $@)
+	curl -fsSL https://timecraft.s3.amazonaws.com/python-vanilla/main/python.wasm -o $@
+
+.python/python311.zip:
+	mkdir -p $(dir $@)
+	curl -fsSL https://timecraft.s3.amazonaws.com/python-vanilla/main/python311.zip -o $@
 
 .gitmodules:
 	git submodule add --name wasi-libc -- \
