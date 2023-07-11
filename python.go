@@ -92,7 +92,6 @@ func pythonAddress(p dwarfparser, name string) uint32 {
 
 type python struct {
 	pyrtaddr ptr32
-	counter  uint64
 }
 
 func getDwarfLocationAddress(ent *dwarf.Entry) uint32 {
@@ -159,8 +158,10 @@ func (p *python) Locations(fn experimental.InternalFunction, pc experimental.Pro
 	loc := location{
 		File:       call.file,
 		Line:       int64(call.line),
+		Column:     0, // TODO
+		Inlined:    false,
 		HumanName:  call.name,
-		StableName: call.name,
+		StableName: call.file + "." + call.name,
 	}
 
 	return uint64(call.addr), []location{loc}
@@ -174,7 +175,6 @@ func (p *python) Stackiter(mod api.Module, def api.FunctionDefinition, wasmsi ex
 
 	return &pystackiter{
 		namedbg: def.DebugName(),
-		counter: &p.counter,
 		mem:     m,
 		framep:  framep,
 	}
@@ -182,7 +182,6 @@ func (p *python) Stackiter(mod api.Module, def api.FunctionDefinition, wasmsi ex
 
 type pystackiter struct {
 	namedbg string
-	counter *uint64
 	mem     api.Memory
 	started bool
 	framep  ptr32 // _PyInterpreterFrame*
@@ -205,8 +204,7 @@ func (p *pystackiter) Next() bool {
 }
 
 func (p *pystackiter) ProgramCounter() experimental.ProgramCounter {
-	*p.counter += 1
-	return experimental.ProgramCounter(*p.counter)
+	return experimental.ProgramCounter(deref[uint32](p.mem, p.framep+padPrevInstrInFrame))
 }
 
 func (p *pystackiter) Function() experimental.InternalFunction {
