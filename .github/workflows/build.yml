@@ -64,4 +64,4 @@ jobs:
         check-latest: true
 
     - name: Test
-      run: go test -v ./...
+      run: make test
