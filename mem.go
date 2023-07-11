@@ -178,7 +178,7 @@ func (p *MemoryProfiler) NewHandler(sampleRate float64) http.Handler {
 // compilers and libraries. It uses the function name to detect memory
 // allocators, currently supporting libc, Go, and TinyGo.
 func (p *MemoryProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
-	if p.p.isPython {
+	if p.p.lang == python311 {
 		switch def.Name() {
 		// Raw domain
 		case "PyMem_RawMalloc":

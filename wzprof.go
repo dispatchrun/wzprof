@@ -27,9 +27,16 @@ type Profiling struct {
 	symbols           symbolizer
 	stackIterator     func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
 
-	isGo     bool
-	isPython bool
+	lang language
 }
+
+type language int8
+
+const (
+	unknown language = iota
+	golang
+	python311
+)
 
 // ProfilingFor a given wasm binary. The resulting Profiling needs to be
 // prepared after Wazero module compilation.
@@ -43,7 +50,7 @@ func ProfilingFor(wasm []byte) *Profiling {
 	}
 
 	if binCompiledByGo(wasm) {
-		r.isGo = true
+		r.lang = golang
 		// Those functions are special. They use a different calling
 		// convention. Their call sites do not update the stack pointer,
 		// which makes it impossible to correctly walk the stack.
@@ -74,11 +81,14 @@ func ProfilingFor(wasm []byte) *Profiling {
 			"memchr":                  {},
 		}
 	} else if supportedPython(wasm) {
-		r.isPython = true
+		r.lang = python311
 		r.onlyFunctions = map[string]struct{}{
+			"PyObject_Vectorcall": {},
+			// Those functions are also likely candidate for useful profiling.
+			// We may need to look into them if someone reports missing frames.
+			//
 			// "_PyEval_EvalFrameDefault": {},
 			// "_PyEvalFramePushAndInit": {},
-			"PyObject_Vectorcall": {},
 		}
 	}
 
@@ -100,7 +110,8 @@ func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) *MemoryProfi
 // Prepare selects the most appropriate analysis functions for the guest
 // code in the provided module.
 func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
-	if p.isGo {
+	switch p.lang {
+	case golang:
 		s, err := preparePclntabSymbolizer(p.wasm, mod)
 		if err != nil {
 			return err
@@ -122,14 +133,14 @@ func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
 			si.first = true
 			return si
 		}
-	} else if p.isPython {
+	case python311:
 		py, err := preparePython(mod)
 		if err != nil {
 			return err
 		}
 		p.symbols = py
 		p.stackIterator = py.Stackiter
-	} else {
+	default:
 		dwarf, err := newDwarfparser(mod)
 		if err != nil {
 			return nil // TODO: surface error as warning?

@@ -196,7 +196,6 @@ func (p *pystackiter) Next() bool {
 	oldframe := p.framep
 	p.framep = deref[ptr32](p.mem, p.framep+padPreviousInFrame)
 	if oldframe == p.framep {
-		fmt.Printf("frame previous field pointer to the same frame: %x", p.framep)
 		p.framep = 0
 		return false
 	}
@@ -339,13 +338,11 @@ func lineForFrame(m vmem, framep, codep ptr32) (int32, bool) {
 
 	linearray := deref[ptr32](m, codep+padLinearrayInCodeObject)
 	if linearray != 0 {
-		fmt.Println("LINEARRAY PANIC")
 		panic("can't handle code sections with line arrays")
 	}
 
 	codebytes := deref[ptr32](m, codep+padLinetableInCodeObject)
 	if codebytes == 0 {
-		fmt.Println("CODEBYTES PANIC")
 		panic("code section must have a linetable")
 	}
 
