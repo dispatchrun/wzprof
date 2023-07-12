@@ -218,6 +218,26 @@ you please file an issue in the github tracker.
 
 [timecraft-python]: https://docs.timecraft.dev/getting-started/prep-application/compiling-python#preparing-python
 
+
+### DWARF (C, Rust, Zig...)
+
+As a fallback, if DWARF sections are available, wzprof symbolizes the wasm stack
+trace using the DWARF symbols stored in custom sections of the module. For this
+to work, you need to make sure your compiler generates those sections. For
+example, use `-g` when compiling with clang:
+
+```
+clang code.c -o code.wasm -g -target wasm32
+```
+
+> **Warning**
+> When using clang with any optimization level other than `-O0`, it will
+> automatically run `wasm-opt` if that program is in your `PATH`. It makes DWARF
+> information unusable by wzprof. Make sure clang can't find `wasm-opt` during
+> compilation. See [llvm/llvm-project#55781][llvm-bug].
+
+[llvm-bug]: https://github.com/llvm/llvm-project/issues/55781
+
 ## Contributing
 
 Pull requests are welcome! Anything that is not a simple fix would probably
