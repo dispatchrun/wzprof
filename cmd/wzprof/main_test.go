@@ -16,7 +16,8 @@ import (
 // that.
 
 func TestDataCSimple(t *testing.T) {
-	testMemoryProfiler(t, "../../testdata/c/simple.wasm", []sample{
+	p := program{filePath: "../../testdata/c/simple.wasm"}
+	testMemoryProfiler(t, p, []sample{
 		{
 			[]int64{1, 10},
 			[]frame{
@@ -53,7 +54,8 @@ func TestDataCSimple(t *testing.T) {
 }
 
 func TestDataRustSimple(t *testing.T) {
-	testMemoryProfiler(t, "../../testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm", []sample{
+	p := program{filePath: "../../testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm"}
+	testMemoryProfiler(t, p, []sample{
 		{
 			[]int64{1, 120},
 			[]frame{
@@ -89,10 +91,52 @@ func TestDataRustSimple(t *testing.T) {
 	})
 }
 
-func TestGoTwoCalls(t *testing.T) {
-	wasm := "../../testdata/go/twocalls.wasm"
+func TestPyTwoCalls(t *testing.T) {
+	pyd := t.TempDir()
+	pyzip := filepath.Join(pyd, "/usr/local/lib/python311.zip")
+	pyscript := filepath.Join(pyd, "script.py")
+	os.MkdirAll(filepath.Dir(pyzip), os.ModePerm)
+	os.Link("../../.python/python311.zip", pyzip)
+	os.Link("../../testdata/python/simple.py", pyscript)
 
-	testCpuProfiler(t, wasm, []sample{
+	p := program{
+		filePath: "../../.python/python.wasm",
+		args:     []string{"/script.py"},
+		mounts:   []string{pyd + ":/"},
+	}
+
+	testCpuProfiler(t, p, []sample{
+		{ // deepest script.py call stack
+			[]int64{1},
+			[]frame{
+				{"script.a", 2, false},
+				{"script.b", 7, false},
+				{"script.c", 11, false},
+				{"script", 15, false},
+			},
+		},
+	})
+
+	testMemoryProfiler(t, p, []sample{
+		// byterray(100) allocates 28 bytes for the object, and 100+1 byte for
+		// the content because in python byte arrays are null-terminated. It
+		// first calls PyObject_Malloc(28), then PyObject_Realloc(101).
+		{
+			[]int64{2, 129},
+			[]frame{
+				{"script.a", 3, false},
+				{"script.b", 7, false},
+				{"script.c", 11, false},
+				{"script", 15, false},
+			},
+		},
+	})
+}
+
+func TestGoTwoCalls(t *testing.T) {
+	p := program{filePath: "../../testdata/go/twocalls.wasm"}
+
+	testCpuProfiler(t, p, []sample{
 		{ // first call to myalloc1() from main.
 			[]int64{1},
 			[]frame{
@@ -129,7 +173,7 @@ func TestGoTwoCalls(t *testing.T) {
 		},
 	})
 
-	testMemoryProfiler(t, wasm, []sample{
+	testMemoryProfiler(t, p, []sample{
 		{ // first call to myalloc1() from main.
 			[]int64{1, 41},
 			[]frame{
@@ -167,35 +211,29 @@ func TestGoTwoCalls(t *testing.T) {
 	})
 }
 
-func testCpuProfiler(t *testing.T, path string, expectedSamples []sample) {
-	prog := &program{
-		filePath:   path,
-		sampleRate: 1,
-		cpuProfile: filepath.Join(t.TempDir(), "cpu.pprof"),
-	}
+func testCpuProfiler(t *testing.T, prog program, expectedSamples []sample) {
+	prog.sampleRate = 1
+	prog.cpuProfile = filepath.Join(t.TempDir(), "cpu.pprof")
 
 	expectedTypes := []string{
 		"samples",
 		"cpu",
 	}
 
-	p := execForProfile(t, prog, prog.cpuProfile)
+	p := execForProfile(t, &prog, prog.cpuProfile)
 	assertSamples(t, expectedTypes, expectedSamples, p)
 }
 
-func testMemoryProfiler(t *testing.T, path string, expectedSamples []sample) {
-	prog := &program{
-		filePath:   path,
-		sampleRate: 1,
-		memProfile: filepath.Join(t.TempDir(), "mem.pprof"),
-	}
+func testMemoryProfiler(t *testing.T, prog program, expectedSamples []sample) {
+	prog.sampleRate = 1
+	prog.memProfile = filepath.Join(t.TempDir(), "mem.pprof")
 
 	expectedTypes := []string{
 		"alloc_objects",
 		"alloc_space",
 	}
 
-	p := execForProfile(t, prog, prog.memProfile)
+	p := execForProfile(t, &prog, prog.memProfile)
 	assertSamples(t, expectedTypes, expectedSamples, p)
 }
 

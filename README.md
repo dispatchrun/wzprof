@@ -186,6 +186,38 @@ The CPU time profiler measures the actual time spent on-CPU without taking into
 account the off-CPU time (e.g waiting for I/O). For this profiler, all the
 host-functions are considered off-CPU.
 
+## Language support
+
+wzprof runs some heuristics to assess what the guest module is running to adapt
+the way it symbolizes and walks the stack. In all other cases, it defaults to
+inspecting the wasm stack and uses DWARF information if present in the module.
+
+### Golang
+
+If the guest has been compiled by golang/go 1.21+, wzprof inspects the memory
+to walk the Go stack, which provides full call stacks, instead of the shortened
+versions you would get without this support.
+
+In addition, wzprof parses pclntab to perform symbolization. This is the same
+mechanism the Go runtime itself uses to display meaningful stack traces when a
+panic occurs.
+
+### Python 3.11
+
+If the guest is CPython 3.11 and has been compiled with debug symbols (such as
+[timecraft's][timecraft-python]), wzprof walks the Python interpreter call
+stack, not the C stack it would otherwise report. This provides more meaningful
+profiling information on the script being executed.
+
+At the moment it does not support merging the C extension calls into the Python
+interpreter stack.
+
+Note that a current limitation of the implementation is that unloading or
+reloading modules may result in an incorrect profile. If that's a problem for
+you please file an issue in the github tracker.
+
+[timecraft-python]: https://docs.timecraft.dev/getting-started/prep-application/compiling-python#preparing-python
+
 ## Contributing
 
 Pull requests are welcome! Anything that is not a simple fix would probably

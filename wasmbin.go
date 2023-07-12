@@ -8,9 +8,14 @@ import (
 // Returns true if the wasm module binary b contains a custom section with this
 // name.
 func wasmHasCustomSection(b []byte, name string) bool {
+	return wasmCustomSection(b, name) != nil
+}
+
+// Returns the byte content of a custom section with name, or nil.
+func wasmCustomSection(b []byte, name string) []byte {
 	const customSectionId = 0
 	if len(b) < 8 {
-		return false
+		return nil
 	}
 	b = b[8:] // skip magic+version
 	for len(b) > 2 {
@@ -24,14 +29,14 @@ func wasmHasCustomSection(b []byte, name string) bool {
 			b = b[n:]
 			m := string(b[:nameLen])
 			if m == name {
-				return true
+				return b[nameLen : length-uint64(n)]
 			}
 			b = b[length-uint64(n):]
 		} else {
 			b = b[length:]
 		}
 	}
-	return false
+	return nil
 }
 
 // The functions in this file inspect the contents of a well-formed wasm-binary.
@@ -65,8 +70,7 @@ type dataIterator struct {
 	b []byte // remaining bytes in the Data section
 	n uint64 // number of segments
 
-	// offset of b in the Data section.
-	offset int
+	offset int // offset of b in the Data section.
 }
 
 // newDataIterator prepares an iterator using the bytes of a well-formed data
@@ -132,9 +136,9 @@ func (d *dataIterator) uvarint() uint64 {
 	return x
 }
 
-// Next returns the bytes of the following segment, and its offset in virtual
+// Next returns the bytes of the following segment, and its address in virtual
 // memory, or a nil slice if there are no more segment.
-func (d *dataIterator) Next() (offset int64, seg []byte) {
+func (d *dataIterator) Next() (vaddr int64, seg []byte) {
 	if d.n == 0 {
 		return 0, nil
 	}
@@ -158,7 +162,7 @@ func (d *dataIterator) Next() (offset int64, seg []byte) {
 		panic(fmt.Errorf("expected constant i32.const (0x41); got %#x", v))
 	}
 
-	offset = d.varint()
+	vaddr = d.varint()
 
 	v = d.byte()
 	if v != 0x0B {
@@ -169,7 +173,7 @@ func (d *dataIterator) Next() (offset int64, seg []byte) {
 	seg = d.read(int(length))
 	d.n--
 
-	return offset, seg
+	return vaddr, seg
 }
 
 // SkipToDataOffset iterates over segments to return the bytes at a given data

@@ -177,7 +177,7 @@ func preparePclntabSymbolizer(wasmbin []byte, mod wazero.CompiledModule) (*pclnt
 	return &pclntab{
 		imported: uint64(len(mod.ImportedFunctions())),
 		modName:  mod.Name(),
-		datap:    ptr(mdaddr),
+		datap:    ptr64(mdaddr),
 	}, nil
 }
 
@@ -209,7 +209,7 @@ func (f *_func) isInlined() bool {
 // by the first ptr.
 type funcinl struct {
 	ones      uint32 // set to ^0 to distinguish from _func
-	entry     ptr    // entry of the real (the "outermost") frame
+	entry     ptr64  // entry of the real (the "outermost") frame
 	name      string
 	file      string
 	line      int32
@@ -245,7 +245,7 @@ func (f funcInfo) valid() bool {
 	return f._func != nil
 }
 
-func (f funcInfo) entry() ptr {
+func (f funcInfo) entry() ptr64 {
 	return f.md.textAddr(f.EntryOff)
 }
 
@@ -257,7 +257,7 @@ func (f funcInfo) name() string {
 // source code corresponding to the program counter pc.
 // The result will not be accurate if pc is not a program
 // counter within f.
-func (f funcInfo) fileLine(pc ptr) (file string, line int) {
+func (f funcInfo) fileLine(pc ptr64) (file string, line int) {
 	fn := f._func
 	if fn.isInlined() { // inlined version
 		fi := (*funcinl)(unsafe.Pointer(fn))
@@ -269,7 +269,7 @@ func (f funcInfo) fileLine(pc ptr) (file string, line int) {
 	return file, int(line32)
 }
 
-func funcline1(f funcInfo, targetpc ptr) (file string, line int32) {
+func funcline1(f funcInfo, targetpc ptr64) (file string, line int32) {
 	datap := f.md
 	if !f.valid() {
 		return "?", 0
@@ -306,7 +306,7 @@ func funcfile(f funcInfo, fileno int32) string {
 // derefs.
 type pclntabOff uint32
 
-func pcdatavalue1(f funcInfo, table uint32, targetpc ptr) int32 {
+func pcdatavalue1(f funcInfo, table uint32, targetpc ptr64) int32 {
 	if table >= f.Npcdata {
 		return -1
 	}
@@ -342,7 +342,7 @@ type pclntab struct {
 	modName string
 	// Virtual address of the firstmoduledata structure. Named like this for
 	// similarity with the Go implementation.
-	datap ptr
+	datap ptr64
 
 	mem vmem
 	md  moduledata
@@ -367,7 +367,7 @@ func (p *pclntab) EnsureReady(mem vmem) {
 //
 // TODO: support multiple go modules.
 // TODO: cache this, as it's on the hot path.
-func (p *pclntab) FindFunc(pc ptr) funcInfo {
+func (p *pclntab) FindFunc(pc ptr64) funcInfo {
 	if pc < p.md.minpc || pc >= p.md.maxpc {
 		return funcInfo{}
 	}
@@ -382,11 +382,11 @@ func (p *pclntab) FindFunc(pc ptr) funcInfo {
 		return funcInfo{}
 	}
 
-	x := ptr(pcOff) + p.md.text - p.md.minpc
+	x := ptr64(pcOff) + p.md.text - p.md.minpc
 	b := x / pcbucketsize
 	i := x % pcbucketsize / (pcbucketsize / nsub)
 
-	ffb := deref[findfuncbucket](p.mem, p.md.findfunctab+b*ptr(unsafe.Sizeof(findfuncbucket{})))
+	ffb := deref[findfuncbucket](p.mem, p.md.findfunctab+b*ptr64(unsafe.Sizeof(findfuncbucket{})))
 
 	idx := ffb.idx + uint32(ffb.subbuckets[i])
 
@@ -412,7 +412,7 @@ func (p *pclntab) Locations(gofunc experimental.InternalFunction, pc experimenta
 
 	var calleeFuncID goruntime.FuncID
 
-	iu, uf := newInlineUnwinder(p, f.mem, f.info, symPC(f.info, ptr(pc)))
+	iu, uf := newInlineUnwinder(p, f.mem, f.info, symPC(f.info, ptr64(pc)))
 	for ; uf.valid(); uf = iu.next(uf) {
 		sf := iu.srcFunc(uf)
 		if sf.funcID == goruntime.FuncIDWrapper && elideWrapperCalling(calleeFuncID) {
@@ -450,7 +450,7 @@ func (p *pclntab) Locations(gofunc experimental.InternalFunction, pc experimenta
 // can be at function entry when the frame is initialized without actually
 // running code, like in runtime.mstart, in which case this returns frame.pc
 // because that's the best we can do.
-func symPC(fn funcInfo, pc ptr) ptr {
+func symPC(fn funcInfo, pc ptr64) ptr64 {
 	if pc > fn.entry() {
 		// Regular call.
 		return pc - 1
@@ -462,15 +462,15 @@ func symPC(fn funcInfo, pc ptr) ptr {
 // https://github.com/golang/go/blob/4859392cc29a35a0126e249ecdedbd022c755b20/src/cmd/link/internal/wasm/asm.go#L45
 const funcValueOffset = 0x1000
 
-func (p *pclntab) PCToFID(pc ptr) fid {
+func (p *pclntab) PCToFID(pc ptr64) fid {
 	return fid(uint64(pc)>>16 + p.imported - funcValueOffset)
 }
 
-func (p *pclntab) FIDToPC(f fid) ptr {
-	return ptr((funcValueOffset + f - fid(p.imported)) << 16)
+func (p *pclntab) FIDToPC(f fid) ptr64 {
+	return ptr64((funcValueOffset + f - fid(p.imported)) << 16)
 }
 
-func (p *pclntab) PCToName(pc ptr) string {
+func (p *pclntab) PCToName(pc ptr64) string {
 	f := p.FindFunc(pc)
 	if !f.valid() {
 		return ""
@@ -478,7 +478,7 @@ func (p *pclntab) PCToName(pc ptr) string {
 	return f.name()
 }
 
-func (p *pclntab) PCToLine(pc ptr) (file string, line int, f funcInfo) {
+func (p *pclntab) PCToLine(pc ptr64) (file string, line int, f funcInfo) {
 	f = p.FindFunc(pc)
 	if !f.valid() {
 		return
@@ -491,7 +491,7 @@ func (p *pclntab) PCToLine(pc ptr) (file string, line int, f funcInfo) {
 // ptr, but is a separate type to avoid confusion between the two. The main
 // difference is a gptr is not supposed to have arithmetic done on it outside
 // rtmem. Also, easier to replace guintptr with a dedicated type.
-type gptr ptr
+type gptr ptr64
 
 // Layout of g struct:
 //
@@ -529,8 +529,8 @@ type gptr ptr
 // goSigStack and sigmask are 0 because
 // https://github.com/golang/go/blob/b950cc8f11dc31cc9f6cfbed883818a7aa3abe94/src/runtime/os_wasm.go#L132
 
-func gM(m vmem, g gptr) ptr {
-	return deref[ptr](m, ptr(g)+8*6)
+func gM(m vmem, g gptr) ptr64 {
+	return deref[ptr64](m, ptr64(g)+8*6)
 }
 
 func gMG0(m vmem, g gptr) gptr {
@@ -541,16 +541,16 @@ func gMCurg(m vmem, g gptr) gptr {
 	return deref[gptr](m, gM(m, g)+144)
 }
 
-func gSchedSp(m vmem, g gptr) ptr {
-	return deref[ptr](m, ptr(g)+8*7)
+func gSchedSp(m vmem, g gptr) ptr64 {
+	return deref[ptr64](m, ptr64(g)+8*7)
 }
 
-func gSchedPc(m vmem, g gptr) ptr {
-	return deref[ptr](m, ptr(g)+8*8)
+func gSchedPc(m vmem, g gptr) ptr64 {
+	return deref[ptr64](m, ptr64(g)+8*8)
 }
 
-func gSchedLr(m vmem, g gptr) ptr {
-	return deref[ptr](m, ptr(g)+8*12)
+func gSchedLr(m vmem, g gptr) ptr64 {
+	return deref[ptr64](m, ptr64(g)+8*12)
 }
 
 // goStackIterator iterates over the physical frames of the Go stack. It is up
@@ -559,7 +559,7 @@ func gSchedLr(m vmem, g gptr) ptr {
 type goStackIterator struct {
 	first   bool
 	pclntab *pclntab
-	pc      ptr
+	pc      ptr64
 	unwinder
 }
 
@@ -616,7 +616,7 @@ type goFunction struct {
 	mem  vmem
 	sym  *pclntab
 	info funcInfo
-	pc   ptr
+	pc   ptr64
 
 	api.FunctionDefinition // required for WazeroOnly
 }
@@ -681,9 +681,9 @@ type functab struct {
 
 // Mapping information for secondary text sections.
 type textsect struct {
-	vaddr    ptr // prelinked section vaddr
-	end      ptr // vaddr + section length
-	baseaddr ptr // relocated section address
+	vaddr    ptr64 // prelinked section vaddr
+	end      ptr64 // vaddr + section length
+	baseaddr ptr64 // relocated section address
 }
 
 // findfuncbucket is an array of these structures.
@@ -704,25 +704,25 @@ type findfuncbucket struct {
 // update derefModuleData accordingly.
 // nolint:unused
 type moduledata struct {
-	pcHeader              ptr
+	pcHeader              ptr64
 	funcnametab           []byte
 	cutab                 []uint32
 	filetab               []byte
 	pctab                 []byte
 	pclntable             []byte
 	ftab                  []functab
-	findfunctab           ptr
-	minpc, maxpc          ptr
-	text, etext           ptr
-	noptrdata, enoptrdata ptr
-	data, edata           ptr
-	bss, ebss             ptr
-	noptrbss, enoptrbss   ptr
-	covctrs, ecovctrs     ptr
-	end, gcdata, gcbss    ptr
-	types, etypes         ptr
-	rodata                ptr
-	gofunc                ptr //  go.func.*
+	findfunctab           ptr64
+	minpc, maxpc          ptr64
+	text, etext           ptr64
+	noptrdata, enoptrdata ptr64
+	data, edata           ptr64
+	bss, ebss             ptr64
+	noptrbss, enoptrbss   ptr64
+	covctrs, ecovctrs     ptr64
+	end, gcdata, gcbss    ptr64
+	types, etypes         ptr64
+	rodata                ptr64
+	gofunc                ptr64 //  go.func.*
 	textsectmap           []textsect
 	// more fields we don't care about now.
 	// ...
@@ -750,7 +750,7 @@ func cstring(b []byte) string {
 
 // textOff is the opposite of textAddr. It converts a PC to a (virtual) offset
 // to md.text, and returns if the PC is in any Go text section.
-func (md moduledata) textOff(pc ptr) (uint32, bool) {
+func (md moduledata) textOff(pc ptr64) (uint32, bool) {
 	res := uint32(pc - md.text)
 	if len(md.textsectmap) > 1 {
 		for i, sect := range md.textsectmap {
@@ -786,8 +786,8 @@ func (md moduledata) textOff(pc ptr) (uint32, bool) {
 // compared against the section vaddrs and ends to determine the containing
 // section. Then the section relative offset is added to the section's relocated
 // baseaddr to compute the function address.
-func (md moduledata) textAddr(off32 uint32) ptr {
-	off := ptr(off32)
+func (md moduledata) textAddr(off32 uint32) ptr64 {
+	off := ptr64(off32)
 	res := md.text + off
 	if len(md.textsectmap) > 1 {
 		for i, sect := range md.textsectmap {
@@ -802,7 +802,7 @@ func (md moduledata) textAddr(off32 uint32) ptr {
 }
 
 // Retrieve module data from memory, including slices.
-func derefModuledata(mem vmem, addr ptr) moduledata {
+func derefModuledata(mem vmem, addr ptr64) moduledata {
 	m := deref[moduledata](mem, addr)
 	m.funcnametab = derefGoSlice(mem, m.funcnametab)
 	m.cutab = derefGoSlice(mem, m.cutab)

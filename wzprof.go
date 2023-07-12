@@ -22,12 +22,21 @@ import (
 type Profiling struct {
 	wasm []byte
 
+	onlyFunctions     map[string]struct{}
 	filteredFunctions map[string]struct{}
 	symbols           symbolizer
 	stackIterator     func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
 
-	isGo bool
+	lang language
 }
+
+type language int8
+
+const (
+	unknown language = iota
+	golang
+	python311
+)
 
 // ProfilingFor a given wasm binary. The resulting Profiling needs to be
 // prepared after Wazero module compilation.
@@ -41,7 +50,7 @@ func ProfilingFor(wasm []byte) *Profiling {
 	}
 
 	if binCompiledByGo(wasm) {
-		r.isGo = true
+		r.lang = golang
 		// Those functions are special. They use a different calling
 		// convention. Their call sites do not update the stack pointer,
 		// which makes it impossible to correctly walk the stack.
@@ -71,6 +80,16 @@ func ProfilingFor(wasm []byte) *Profiling {
 			"memcmp":                  {},
 			"memchr":                  {},
 		}
+	} else if supportedPython(wasm) {
+		r.lang = python311
+		r.onlyFunctions = map[string]struct{}{
+			"PyObject_Vectorcall": {},
+			// Those functions are also likely candidate for useful profiling.
+			// We may need to look into them if someone reports missing frames.
+			//
+			// "_PyEval_EvalFrameDefault": {},
+			// "_PyEvalFramePushAndInit": {},
+		}
 	}
 
 	return r
@@ -91,7 +110,8 @@ func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) *MemoryProfi
 // Prepare selects the most appropriate analysis functions for the guest
 // code in the provided module.
 func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
-	if p.isGo {
+	switch p.lang {
+	case golang:
 		s, err := preparePclntabSymbolizer(p.wasm, mod)
 		if err != nil {
 			return err
@@ -109,14 +129,24 @@ func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
 			sp0 := uint32(imod.Global(0).Get())
 			gp0 := imod.Global(2).Get()
 			pc0 := si.symbols.FIDToPC(fid(def.Index()))
-			si.initAt(ptr(pc0), ptr(sp0), 0, gptr(gp0), 0)
+			si.initAt(ptr64(pc0), ptr64(sp0), 0, gptr(gp0), 0)
 			si.first = true
 			return si
 		}
-	} else {
-		p.symbols, _ = buildDwarfSymbolizer(mod) // TODO: surface error as warning?
+	case python311:
+		py, err := preparePython(mod)
+		if err != nil {
+			return err
+		}
+		p.symbols = py
+		p.stackIterator = py.Stackiter
+	default:
+		dwarf, err := newDwarfparser(mod)
+		if err != nil {
+			return nil // TODO: surface error as warning?
+		}
+		p.symbols = buildDwarfSymbolizer(dwarf)
 	}
-
 	return nil
 }
 

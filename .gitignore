@@ -21,3 +21,4 @@
 testdata/rust/*/target/*
 testdata/.sysroot/*
 *.pb.gz
+.python

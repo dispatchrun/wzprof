@@ -63,5 +63,8 @@ jobs:
         go-version-file: .go-version
         check-latest: true
 
+    - name: Setup python
+      run: make python
+
     - name: Test
-      run: go test -v ./...
+      run: go test ./...

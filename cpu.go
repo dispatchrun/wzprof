@@ -188,7 +188,14 @@ func (p *CPUProfiler) NewHandler(sampleRate float64) http.Handler {
 // NewFunctionListener returns a function listener suited to record CPU timings
 // of calls to the function passed as argument.
 func (p *CPUProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
-	_, skip := p.p.filteredFunctions[def.Name()]
+	name := def.Name()
+	if len(p.p.onlyFunctions) > 0 {
+		_, keep := p.p.onlyFunctions[name]
+		if !keep {
+			return nil
+		}
+	}
+	_, skip := p.p.filteredFunctions[name]
 	if skip {
 		return nil
 	}

@@ -178,6 +178,38 @@ func (p *MemoryProfiler) NewHandler(sampleRate float64) http.Handler {
 // compilers and libraries. It uses the function name to detect memory
 // allocators, currently supporting libc, Go, and TinyGo.
 func (p *MemoryProfiler) NewFunctionListener(def api.FunctionDefinition) experimental.FunctionListener {
+	if p.p.lang == python311 {
+		switch def.Name() {
+		// Raw domain
+		case "PyMem_RawMalloc":
+			return profilingListener{p.p, &mallocProfiler{memory: p}}
+		case "PyMem_RawCalloc":
+			return profilingListener{p.p, &callocProfiler{memory: p}}
+		case "PyMem_RawRealloc":
+			return profilingListener{p.p, &reallocProfiler{memory: p}}
+		case "PyMem_RawFree":
+			return profilingListener{p.p, &freeProfiler{memory: p}}
+		// Memory domain
+		case "PyMem_Malloc":
+			return profilingListener{p.p, &mallocProfiler{memory: p}}
+		case "PyMem_Calloc":
+			return profilingListener{p.p, &callocProfiler{memory: p}}
+		case "PyMem_Realloc":
+			return profilingListener{p.p, &reallocProfiler{memory: p}}
+		case "PyMem_Free":
+			return profilingListener{p.p, &freeProfiler{memory: p}}
+		// Object domain
+		case "PyObject_Malloc":
+			return profilingListener{p.p, &mallocProfiler{memory: p}}
+		case "PyObject_Calloc":
+			return profilingListener{p.p, &callocProfiler{memory: p}}
+		case "PyObject_Realloc":
+			return profilingListener{p.p, &reallocProfiler{memory: p}}
+		case "PyObject_Free":
+			return profilingListener{p.p, &freeProfiler{memory: p}}
+		}
+		return nil
+	}
 	switch def.Name() {
 	// C standard library, Rust
 	case "malloc":

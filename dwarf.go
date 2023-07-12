@@ -11,14 +11,13 @@ import (
 	"sync"
 
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
 )
 
 // buildDwarfSymbolizer constructs a Symbolizer instance from the DWARF sections
 // of the given WebAssembly module.
-func buildDwarfSymbolizer(module wazero.CompiledModule) (symbolizer, error) {
-	return newDwarfmapper(module.CustomSections())
+func buildDwarfSymbolizer(parser dwarfparser) symbolizer {
+	return newDwarfmapper(parser)
 }
 
 type sourceOffsetRange = [2]uint64
@@ -42,42 +41,67 @@ type dwarfmapper struct {
 	onceSourceOffsetNotFound sync.Once
 }
 
-func newDwarfmapper(sections []api.CustomSection) (*dwarfmapper, error) {
-	var info, line, ranges, str, abbrev []byte
+const (
+	debugInfo   = ".debug_info"
+	debugLine   = ".debug_line"
+	debugStr    = ".debug_str"
+	debugAbbrev = ".debug_abbrev"
+	debugRanges = ".debug_ranges"
+)
 
+func newDwarfparser(module wazero.CompiledModule) (dwarfparser, error) {
+	sections := module.CustomSections()
+
+	var info, line, ranges, str, abbrev []byte
 	for _, section := range sections {
 		log.Printf("dwarf: found section %s", section.Name())
 		switch section.Name() {
-		case ".debug_info":
+		case debugInfo:
 			info = section.Data()
-		case ".debug_line":
+		case debugLine:
 			line = section.Data()
-		case ".debug_str":
+		case debugStr:
 			str = section.Data()
-		case ".debug_abbrev":
+		case debugAbbrev:
 			abbrev = section.Data()
-		case ".debug_ranges":
+		case debugRanges:
 			ranges = section.Data()
 		}
 	}
 
 	d, err := dwarf.New(abbrev, nil, nil, info, line, nil, ranges, str)
 	if err != nil {
-		return nil, fmt.Errorf("dwarf: %w", err)
+		return dwarfparser{}, fmt.Errorf("dwarf: %w", err)
 	}
 
 	r := d.Reader()
+	return dwarfparser{d: d, r: r}, nil
+}
 
-	p := dwarfparser{d: d, r: r}
+func newDwarfParserFromBin(wasmbin []byte) (dwarfparser, error) {
+	info := wasmCustomSection(wasmbin, debugInfo)
+	line := wasmCustomSection(wasmbin, debugLine)
+	ranges := wasmCustomSection(wasmbin, debugRanges)
+	str := wasmCustomSection(wasmbin, debugStr)
+	abbrev := wasmCustomSection(wasmbin, debugAbbrev)
+
+	d, err := dwarf.New(abbrev, nil, nil, info, line, nil, ranges, str)
+	if err != nil {
+		return dwarfparser{}, fmt.Errorf("dwarf: %w", err)
+	}
+
+	r := d.Reader()
+	return dwarfparser{d: d, r: r}, nil
+}
+
+func newDwarfmapper(p dwarfparser) *dwarfmapper {
 	subprograms := p.Parse()
 	log.Printf("dwarf: parsed %d subprogramm ranges", len(subprograms))
 
-	dm := &dwarfmapper{
-		d:           d,
+	return &dwarfmapper{
+		d:           p.d,
 		subprograms: subprograms,
 	}
-
-	return dm, nil
 }
 
 type dwarfparser struct {
