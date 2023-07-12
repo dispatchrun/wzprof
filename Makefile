@@ -43,7 +43,7 @@ testdata/.sysroot/lib/wasm32-wasi/libc.a: testdata/.wasi-libc
 
 testdata/c/%.c: wasi-libc
 testdata/c/%.wasm: testdata/c/%.c
-	clang $< -o $@ -Wall -Os -target wasm32-unknown-wasi --sysroot testdata/.sysroot
+	clang $< -o $@ -Wall -g -Os -target wasm32-unknown-wasi --sysroot testdata/.sysroot
 
 testdata/go/%.wasm: testdata/go/%.go
 	GOARCH=wasm GOOS=wasip1 gotip build -o $@ $<

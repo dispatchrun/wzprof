@@ -308,7 +308,7 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 		File:       le.File.Name,
 		Line:       int64(le.Line),
 		Column:     int64(le.Column),
-		Inlined:    len(spgm.Inlines) > 0,
+		Inlined:    false,
 		HumanName:  human,
 		StableName: stable,
 	})
@@ -316,12 +316,26 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 	if len(spgm.Inlines) > 0 {
 		files := lr.Files()
 		for i := len(spgm.Inlines) - 1; i >= 0; i-- {
-			// TODO: check source offset is in range of inline?
 			f := spgm.Inlines[i]
 			fileIdx, ok := f.Val(dwarf.AttrCallFile).(int64)
 			if !ok || fileIdx >= int64(len(files)) {
 				break
 			}
+
+			ranges, err := d.d.Ranges(f)
+			if err != nil {
+				continue
+			}
+			found := false
+			for _, x := range ranges {
+				if x[0] <= offset && offset <= x[1] {
+					found = true
+				}
+			}
+			if !found {
+				continue
+			}
+
 			file := files[fileIdx]
 			line, _ := f.Val(dwarf.AttrCallLine).(int64)
 			col, _ := f.Val(dwarf.AttrCallLine).(int64)
@@ -330,7 +344,7 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 				File:       file.Name,
 				Line:       line,
 				Column:     col,
-				Inlined:    i != 0,
+				Inlined:    true,
 				StableName: stable,
 				HumanName:  human,
 			})
