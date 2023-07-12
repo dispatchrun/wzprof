@@ -119,7 +119,8 @@ func TestPyTwoCalls(t *testing.T) {
 
 	testMemoryProfiler(t, p, []sample{
 		// byterray(100) allocates 28 bytes for the object, and 100+1 byte for
-		// the content because in python byte arrays are null-terminated.
+		// the content because in python byte arrays are null-terminated. It
+		// first calls PyObject_Malloc(28), then PyObject_Realloc(101).
 		{
 			[]int64{2, 129},
 			[]frame{
