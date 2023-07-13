@@ -53,6 +53,34 @@ func TestDataCSimple(t *testing.T) {
 	})
 }
 
+func TestCBench(t *testing.T) {
+	p := program{filePath: "../../testdata/c/bench.wasm"}
+
+	testCpuProfiler(t, p, []sample{
+		{ // ensure isDir is inlined
+			[]int64{1},
+			[]frame{
+				{"strlen", 0, false},      // strlen
+				{"isDir", 89, true},       // isDir
+				{"joinPath", 17, false},   // joinPath
+				{"main", 115, false},      // __main_argc_argv
+				{"__main_void", 0, false}, // __main_void
+				{"_start", 0, false},      // _start
+			},
+		},
+		{ // ensure appendCleanPath is child of joinPath
+			[]int64{1},
+			[]frame{
+				{"appendCleanPath", 22, false}, // appendCleanPath
+				{"joinPath", 83, false},        // joinPath
+				{"main", 115, false},           // __main_argc_argv
+				{"__main_void", 0, false},      // __main_void
+				{"_start", 0, false},           // _start
+			},
+		},
+	})
+}
+
 func TestDataRustSimple(t *testing.T) {
 	p := program{filePath: "../../testdata/rust/simple/target/wasm32-wasi/debug/simple.wasm"}
 	testMemoryProfiler(t, p, []sample{
@@ -63,25 +91,18 @@ func TestDataRustSimple(t *testing.T) {
 				{"std:sys:wasi:alloc:{impl#0}:alloc", 381, true},                                            // _ZN3std3sys4wasi5alloc81_$LT$impl$u20$core..alloc..global..GlobalAlloc$u20$for$u20$std..alloc..System$GT$5alloc17hf06d843ee28c936eE
 				{"std:alloc:__default_lib_allocator:__rdl_alloc", 14, false},                                // std:alloc:__default_lib_allocator:__rdl_alloc
 				{"__rust_alloc", 0, false},                                                                  // __rust_alloc
-				{"core:alloc:layout:size", 173, true},                                                       // _ZN4core5alloc6layout6Layout4size17h4a3a848dac2e5d6cE
-				{"core:alloc:layout:dangling", 174, true},                                                   // _ZN4core5alloc6layout6Layout8dangling17h205051d0cdadc81fE
 				{"alloc:alloc:alloc_impl", 95, false},                                                       // _ZN5alloc5alloc6Global10alloc_impl17h579ac88351552cb7E
 				{"alloc:alloc:{impl#1}:allocate", 237, false},                                               // _ZN63_$LT$alloc..alloc..Global$u20$as$u20$core..alloc..Allocator$GT$8allocate17hcb9ff3e2ca003c84E
-				{"core:alloc:layout:array<i32>", 176, true},                                                 // _ZN4core5alloc6layout6Layout5array17hb8c955ded92025c1E
 				{"alloc:raw_vec:allocate_in<i32, alloc::alloc::Global>", 185, false},                        // _ZN5alloc7raw_vec19RawVec$LT$T$C$A$GT$11allocate_in17hec12f02c19409feeE
 				{"alloc:vec:with_capacity_in<i32, alloc::alloc::Global>", 483, true},                        // _ZN5alloc3vec16Vec$LT$T$C$A$GT$16with_capacity_in17h574658446754b2caE
 				{"alloc:vec:with_capacity<i32>", 131, false},                                                // _ZN5alloc3vec12Vec$LT$T$GT$13with_capacity17hea1d94514f4fb20fE
-				{"simple:allocate_even_more_memory", 29, false},                                             // _ZN6simple25allocate_even_more_memory17h94cc86da44bad945E
-				{"simple:allocate_more_memory", 23, false},                                                  // _ZN6simple20allocate_more_memory17h4594ee16911b70d7E
+				{"simple:allocate_more_memory", 19, false},                                                  // _ZN6simple20allocate_more_memory17h4594ee16911b70d7E
 				{"simple:allocate_memory", 13, false},                                                       // _ZN6simple15allocate_memory17hb0084bacecc50a31E
 				{"simple:main", 4, false},                                                                   // _ZN6simple4main17h7c6bec49f74488e8E
 				{"core:ops:function:FnOnce:call_once<fn(), ()>", 250, false},                                // _ZN4core3ops8function6FnOnce9call_once17h65afd749b06e87d3E
 				{"std:sys_common:backtrace:__rust_begin_short_backtrace<fn(), ()>", 121, false},             // _ZN3std10sys_common9backtrace28__rust_begin_short_backtrace17h46f307b03ffe9605E
-				{"std:process:to_i32", 166, true},                                                           // _ZN3std7process8ExitCode6to_i3217h04fa3a639ce3318dE
 				{"std:rt:lang_start:{closure#0}<()>", 166, false},                                           // _ZN3std2rt10lang_start28_$u7b$$u7b$closure$u7d$$u7d$17h820e14cd6a99f492E
-				{"std:panic:catch_unwind<std::rt::lang_start_internal::{closure_env#1}, ()>", 147, true},    // _ZN3std5panic12catch_unwind17h9087a606b40b7d51E
 				{"std:panic:catch_unwind<std::rt::lang_start_internal::{closure_env#2}, isize>", 148, true}, // _ZN3std5panic12catch_unwind17h09dbc99d0be4be1fE
-				{"std:panic:catch_unwind<fn(), ()>", 153, true},                                             // _ZN3std5panic12catch_unwind17he6fc2a53d5cadc61E
 				{"std:rt:lang_start_internal", 287, false},                                                  // _ZN3std2rt19lang_start_internal17h38aaea5d7881ae71E
 				{"std:rt:lang_start<()>", 165, false},                                                       // _ZN3std2rt10lang_start17hb2321e0751704c7cE
 				{"__main_void", 0, false},                                                                   // __main_void

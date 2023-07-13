@@ -25,8 +25,13 @@ type sourceOffsetRange = [2]uint64
 type subprogram struct {
 	Entry     *dwarf.Entry
 	CU        *dwarf.Entry
-	Inlines   []*dwarf.Entry
+	Inlines   []entryRanges
 	Namespace string
+}
+
+type entryRanges struct {
+	entry  *dwarf.Entry
+	ranges []sourceOffsetRange
 }
 
 type subprogramRange struct {
@@ -169,8 +174,7 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 	// Assumption is r has just read the top entry of the subprogram, which
 	// is e.
 
-	var inlines []*dwarf.Entry
-
+	var inlines []entryRanges
 	for e.Children {
 		ent, err := d.r.Next()
 		if err != nil || ent == nil {
@@ -183,7 +187,12 @@ func (d *dwarfparser) parseSubprogram(cu *dwarf.Entry, ns string, e *dwarf.Entry
 			d.r.SkipChildren()
 			continue
 		}
-		inlines = append(inlines, ent)
+		ranges, err := d.d.Ranges(ent)
+		if err != nil {
+			d.r.SkipChildren()
+			continue
+		}
+		inlines = append(inlines, entryRanges{ent, ranges})
 		// Inlines can have children that describe which variables were
 		// used during inlining.
 		d.r.SkipChildren()
@@ -308,7 +317,7 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 		File:       le.File.Name,
 		Line:       int64(le.Line),
 		Column:     int64(le.Column),
-		Inlined:    len(spgm.Inlines) > 0,
+		Inlined:    false,
 		HumanName:  human,
 		StableName: stable,
 	})
@@ -316,21 +325,21 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 	if len(spgm.Inlines) > 0 {
 		files := lr.Files()
 		for i := len(spgm.Inlines) - 1; i >= 0; i-- {
-			// TODO: check source offset is in range of inline?
-			f := spgm.Inlines[i]
-			fileIdx, ok := f.Val(dwarf.AttrCallFile).(int64)
-			if !ok || fileIdx >= int64(len(files)) {
-				break
+			er := spgm.Inlines[i]
+			fileIdx, ok := er.entry.Val(dwarf.AttrCallFile).(int64)
+			if !ok || fileIdx >= int64(len(files)) || !offsetInRanges(er.ranges, offset) {
+				continue
 			}
+
 			file := files[fileIdx]
-			line, _ := f.Val(dwarf.AttrCallLine).(int64)
-			col, _ := f.Val(dwarf.AttrCallLine).(int64)
-			human, stable := d.namesForSubprogram(f, nil)
+			line, _ := er.entry.Val(dwarf.AttrCallLine).(int64)
+			col, _ := er.entry.Val(dwarf.AttrCallLine).(int64)
+			human, stable := d.namesForSubprogram(er.entry, nil)
 			locations = append(locations, location{
 				File:       file.Name,
 				Line:       line,
 				Column:     col,
-				Inlined:    i != 0,
+				Inlined:    true,
 				StableName: stable,
 				HumanName:  human,
 			})
@@ -338,6 +347,15 @@ func (d *dwarfmapper) Locations(fn experimental.InternalFunction, pc experimenta
 	}
 
 	return offset, locations
+}
+
+func offsetInRanges(ranges []sourceOffsetRange, offset uint64) bool {
+	for _, x := range ranges {
+		if x[0] <= offset && offset <= x[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // line is used to cache line entries for a given compilation unit.
