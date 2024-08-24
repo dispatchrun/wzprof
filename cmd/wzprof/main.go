@@ -59,6 +59,20 @@ func (prog *program) run(ctx context.Context) error {
 
 	p := wzprof.ProfilingFor(wasmCode)
 
+	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
+		WithDebugInfoEnabled(true).
+		WithCustomSections(true))
+
+	stdout.Printf("compiling wasm module %s", prog.filePath)
+	compiledModule, err := runtime.CompileModule(ctx, wasmCode)
+	if err != nil {
+		return fmt.Errorf("compiling wasm module: %w", err)
+	}
+	err = p.Prepare(compiledModule)
+	if err != nil {
+		return fmt.Errorf("preparing wasm module: %w", err)
+	}
+
 	cpu, err := p.CPUProfiler(wzprof.HostTime(prog.hostTime))
 	if err != nil {
 		return fmt.Errorf("creating cpu profiler: %w", err)
@@ -83,25 +97,6 @@ func (prog *program) run(ctx context.Context) error {
 		for i, lstn := range listeners {
 			listeners[i] = wzprof.Sample(prog.sampleRate, lstn)
 		}
-	}
-
-	ctx = context.WithValue(ctx,
-		experimental.FunctionListenerFactoryKey{},
-		experimental.MultiFunctionListenerFactory(listeners...),
-	)
-
-	runtime := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
-		WithDebugInfoEnabled(true).
-		WithCustomSections(true))
-
-	stdout.Printf("compiling wasm module %s", prog.filePath)
-	compiledModule, err := runtime.CompileModule(ctx, wasmCode)
-	if err != nil {
-		return fmt.Errorf("compiling wasm module: %w", err)
-	}
-	err = p.Prepare(compiledModule)
-	if err != nil {
-		return fmt.Errorf("preparing wasm module: %w", err)
 	}
 
 	if prog.pprofAddr != "" {

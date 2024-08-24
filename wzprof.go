@@ -96,27 +96,10 @@ func ProfilingFor(wasm []byte) *Profiling {
 	return r
 }
 
-// CPUProfiler constructs a new instance of CPUProfiler using the given time
-// function to record the CPU time consumed.
-func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) (*CPUProfiler, error) {
-	if !p.prepareCalled {
-		return nil, fmt.Errorf("Prepare must be called on the Profiling instance before creating a CPUProfiler")
-	}
-	return newCPUProfiler(p, options...), nil
-}
-
-// MemoryProfiler constructs a new instance of MemoryProfiler using the given
-// time function to record the profile execution time.
-func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) (*MemoryProfiler, error) {
-	if !p.prepareCalled {
-		return nil, fmt.Errorf("Prepare must be called on the Profiling instance before creating a MemoryProfiler")
-	}
-	return newMemoryProfiler(p, options...), nil
-}
-
 // Prepare selects the most appropriate analysis functions for the guest
 // code in the provided module.
 func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
+
 	switch p.lang {
 	case golang:
 		s, err := preparePclntabSymbolizer(p.wasm, mod)
@@ -159,6 +142,24 @@ func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
 	p.prepareCalled = true
 
 	return nil
+}
+
+// CPUProfiler constructs a new instance of CPUProfiler using the given time
+// function to record the CPU time consumed.
+func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) (*CPUProfiler, error) {
+	if !p.prepareCalled {
+		return nil, fmt.Errorf("Prepare must be called on the Profiling instance before creating a CPUProfiler")
+	}
+	return newCPUProfiler(p, options...), nil
+}
+
+// MemoryProfiler constructs a new instance of MemoryProfiler using the given
+// time function to record the profile execution time.
+func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) (*MemoryProfiler, error) {
+	if !p.prepareCalled {
+		return nil, fmt.Errorf("Prepare must be called on the Profiling instance before creating a MemoryProfiler")
+	}
+	return newMemoryProfiler(p, options...), nil
 }
 
 // profilingListener wraps a FunctionListener to adapt its stack iterator to the
