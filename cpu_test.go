@@ -10,22 +10,31 @@ import (
 )
 
 func BenchmarkCPUProfilerOn(b *testing.B) {
-	p := ProfilingFor(nil).CPUProfiler()
+	p, err := ProfilingFor(nil).CPUProfiler()
+	if err != nil {
+		b.Fatal(err)
+	}
 	p.StartProfile()
 	benchmarkFunctionListener(b, p)
 }
 
 func BenchmarkCPUProfilerOff(b *testing.B) {
-	p := ProfilingFor(nil).CPUProfiler()
+	p, err := ProfilingFor(nil).CPUProfiler()
+	if err != nil {
+		b.Fatal(err)
+	}
 	benchmarkFunctionListener(b, p)
 }
 
 func TestCPUProfilerTime(t *testing.T) {
 	currentTime := int64(0)
 
-	p := ProfilingFor(nil).CPUProfiler(
+	p, err := ProfilingFor(nil).CPUProfiler(
 		TimeFunc(func() int64 { return currentTime }),
 	)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	module := wazerotest.NewModule(nil,
 		wazerotest.NewFunction(func(context.Context, api.Module) {}),
