@@ -73,15 +73,8 @@ func (prog *program) run(ctx context.Context) error {
 		return fmt.Errorf("preparing wasm module: %w", err)
 	}
 
-	cpu, err := p.CPUProfiler(wzprof.HostTime(prog.hostTime))
-	if err != nil {
-		return fmt.Errorf("creating cpu profiler: %w", err)
-	}
-
-	mem, err := p.MemoryProfiler(wzprof.InuseMemory(prog.inuseMemory))
-	if err != nil {
-		return fmt.Errorf("creating memory profiler: %w", err)
-	}
+	cpu := p.CPUProfiler(wzprof.HostTime(prog.hostTime))
+	mem := p.MemoryProfiler(wzprof.InuseMemory(prog.inuseMemory))
 
 	var listeners []experimental.FunctionListenerFactory
 	if prog.cpuProfile != "" || prog.pprofAddr != "" {

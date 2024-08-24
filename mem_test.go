@@ -5,9 +5,6 @@ import (
 )
 
 func BenchmarkMemoryProfiler(b *testing.B) {
-	p, err := ProfilingFor(nil).MemoryProfiler()
-	if err != nil {
-		b.Fatal(err)
-	}
+	p := ProfilingFor(nil).MemoryProfiler()
 	benchmarkFunctionListener(b, p)
 }

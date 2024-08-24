@@ -146,20 +146,20 @@ func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
 
 // CPUProfiler constructs a new instance of CPUProfiler using the given time
 // function to record the CPU time consumed.
-func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) (*CPUProfiler, error) {
+func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
 	if !p.prepareCalled {
-		return nil, fmt.Errorf("Prepare must be called on the Profiling instance before creating a CPUProfiler")
+		panic("Profiling.Prepare must be called before creating a CPU profiler")
 	}
-	return newCPUProfiler(p, options...), nil
+	return newCPUProfiler(p, options...)
 }
 
 // MemoryProfiler constructs a new instance of MemoryProfiler using the given
 // time function to record the profile execution time.
-func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) (*MemoryProfiler, error) {
+func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
 	if !p.prepareCalled {
-		return nil, fmt.Errorf("Prepare must be called on the Profiling instance before creating a MemoryProfiler")
+		panic("Profiling.Prepare must be called before creating a Memory profiler")
 	}
-	return newMemoryProfiler(p, options...), nil
+	return newMemoryProfiler(p, options...)
 }
 
 // profilingListener wraps a FunctionListener to adapt its stack iterator to the
