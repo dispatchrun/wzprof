@@ -4,7 +4,6 @@ package wzprof
 
 import (
 	"fmt"
-	"reflect"
 	"unsafe"
 )
 
@@ -85,8 +84,7 @@ func derefArray[T any](r vmem, p ptr, n uint32) []T {
 // 64-bits.
 func derefGoSlice[T any](r vmem, s []T) []T {
 	count := len(s)
-	sh := (*reflect.SliceHeader)(unsafe.Pointer(&s))
-	dp := ptr64(sh.Data)
+	dp := ptr64(uintptr(unsafe.Pointer(unsafe.SliceData(s)))) // Convert to uintptr first, then to ptr64
 	res := make([]T, count)
 	for i := 0; i < count; i++ {
 		res[i] = derefArrayIndex[T](r, dp, int32(i))
