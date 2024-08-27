@@ -1,7 +1,7 @@
 run:
   deadline: 7m
   timeout: 5m
-  go: '1.20'
+  go: '1.22'
 
 linters:
   enable:
@@ -19,9 +19,12 @@ issues:
 
 linters-settings:
   depguard:
-    list-type: blacklist
-    include-go-root: true
-    packages-with-error-message: []
+    rules:
+      main:
+        list-mode: lax
+        deny:
+          - pkg: github.com/pkg/errors
+            desc: 'Use errors or fmt instead of github.com/pkg/errors'
   errcheck:
   goimports:
     local-prefixes: github.com/stealthrocket/wzprof
