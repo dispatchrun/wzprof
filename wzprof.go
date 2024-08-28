@@ -27,7 +27,8 @@ type Profiling struct {
 	symbols           symbolizer
 	stackIterator     func(mod api.Module, def api.FunctionDefinition, wasmsi experimental.StackIterator) experimental.StackIterator
 
-	lang language
+	lang          language
+	prepareCalled bool // Flag to indicate if Prepare has been called
 }
 
 type language int8
@@ -95,18 +96,6 @@ func ProfilingFor(wasm []byte) *Profiling {
 	return r
 }
 
-// CPUProfiler constructs a new instance of CPUProfiler using the given time
-// function to record the CPU time consumed.
-func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
-	return newCPUProfiler(p, options...)
-}
-
-// MemoryProfiler constructs a new instance of MemoryProfiler using the given
-// time function to record the profile execution time.
-func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
-	return newMemoryProfiler(p, options...)
-}
-
 // Prepare selects the most appropriate analysis functions for the guest
 // code in the provided module.
 func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
@@ -147,7 +136,29 @@ func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
 		}
 		p.symbols = buildDwarfSymbolizer(dwarf)
 	}
+
+	// Set the flag to true if Prepare succeeds
+	p.prepareCalled = true
+
 	return nil
+}
+
+// CPUProfiler constructs a new instance of CPUProfiler using the given time
+// function to record the CPU time consumed.
+func (p *Profiling) CPUProfiler(options ...CPUProfilerOption) *CPUProfiler {
+	if !p.prepareCalled {
+		panic("Profiling.Prepare must be called before creating a CPU profiler")
+	}
+	return newCPUProfiler(p, options...)
+}
+
+// MemoryProfiler constructs a new instance of MemoryProfiler using the given
+// time function to record the profile execution time.
+func (p *Profiling) MemoryProfiler(options ...MemoryProfilerOption) *MemoryProfiler {
+	if !p.prepareCalled {
+		panic("Profiling.Prepare must be called before creating a Memory profiler")
+	}
+	return newMemoryProfiler(p, options...)
 }
 
 // profilingListener wraps a FunctionListener to adapt its stack iterator to the
