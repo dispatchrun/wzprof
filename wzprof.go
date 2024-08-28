@@ -99,7 +99,6 @@ func ProfilingFor(wasm []byte) *Profiling {
 // Prepare selects the most appropriate analysis functions for the guest
 // code in the provided module.
 func (p *Profiling) Prepare(mod wazero.CompiledModule) error {
-
 	switch p.lang {
 	case golang:
 		s, err := preparePclntabSymbolizer(p.wasm, mod)
